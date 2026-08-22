@@ -11,6 +11,8 @@ import ExamPlayer from "@/app/ExamPlayer";
 import Result from "@/app/Result";
 import QuestionBank from "@/app/QuestionBank";
 import WeakTopics from "@/app/WeakTopics";
+import DersNotlari from "@/app/DersNotlari";
+import PuanHesapla from "@/app/PuanHesapla";
 import Leaderboard from "@/app/Leaderboard";
 import AICoach from "@/app/AICoach";
 import Profile from "@/app/Profile";
@@ -51,6 +53,8 @@ export default function App() {
           <Route path="sonuc" element={<Result />} />
           <Route path="soru-bankasi" element={<QuestionBank />} />
           <Route path="eksiklerim" element={<WeakTopics />} />
+          <Route path="ders-notlari" element={<DersNotlari />} />
+          <Route path="puan-hesapla" element={<PuanHesapla />} />
           <Route path="siralama" element={<Leaderboard />} />
           <Route path="ai-koc" element={<AICoach />} />
           <Route path="profil" element={<Profile />} />

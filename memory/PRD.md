@@ -27,6 +27,14 @@
 - Award-worthy landing (kinetik hero, marquee, manifesto chapters, parallax).
 - Testing: 54/54 backend pytest pass; tüm frontend akışları çalışıyor.
 
+## Implemented (2026-06, iterasyon 2)
+- Ders Notları: study_notes modeli + admin CRUD + dosya yükleme (Emergent object storage) + video URL + konu bazlı otomatik yönlendirme (Eksiklerim/AI Koç → ilgili not). Kullanıcı ders notları sayfası + modal.
+- Toplu Soru Aktarımı: admin CSV import (`/api/admin/questions/import-csv`) — alan/duplicate/geçersiz-referans doğrulaması + satır bazlı hata raporu.
+- Sınav Bazlı Puanlama: exam.scoring_config (bölüm, yanlış ceza, katsayı, taban puan, çarpan); admin puanlama düzenleyici (bölüm ekle/çıkar); kullanıcı Puan Hesapla sayfası (`/api/score/calculate`).
+- AI Koç (LLM): GPT-5.4 (Emergent Universal Key) ile gerçek performans verisine dayalı Türkçe analiz + 7 günlük çalışma planı (`/api/ai/coach`), ai_recommendations kaydı.
+- Mobil menü çekmeceyle tüm sayfalar erişilebilir; PuanHesapla null-config koruması.
+- Testing iterasyon 2: 82/82 backend pytest pass; canlı GPT-5.4 çağrısı doğrulandı.
+
 ## Test Credentials
 - Admin: admin@sinav.com / admin123
 - Demo (geçmişli): demo@sinav.com / demo123

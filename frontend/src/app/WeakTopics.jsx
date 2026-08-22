@@ -54,8 +54,8 @@ export default function WeakTopics() {
                     </div>
                     <div className="mt-4 flex items-center justify-between">
                       <p className="text-sm text-zinc-500">Bu konuyu geliştirmek için ders notunu incele.</p>
-                      <Link to="/app/soru-bankasi" className="flex items-center gap-1 text-sm font-semibold" style={{ color: tn.hex }} data-testid={`weak-practice-${t.topic_id}`}>
-                        <BookOpen size={14} /> Çalış <ArrowRight size={14} />
+                      <Link to={`/app/ders-notlari?topic_id=${t.topic_id}`} className="flex items-center gap-1 text-sm font-semibold" style={{ color: tn.hex }} data-testid={`weak-practice-${t.topic_id}`}>
+                        <BookOpen size={14} /> Ders notuna git <ArrowRight size={14} />
                       </Link>
                     </div>
                   </Card>

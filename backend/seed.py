@@ -257,3 +257,51 @@ async def _seed_answers_for(db, user_id, questions_docs, exam_id, solved=60):
         })
     if answers:
         await db.user_answers.insert_many(answers)
+
+
+async def seed_extras(db):
+    """Idempotent + self-healing: seed study notes for topics across exams + scoring configs."""
+    if await db.study_notes.count_documents({}) == 0:
+        subjects = {s["id"]: s for s in await db.subjects.find({}, {"_id": 0}).to_list(2000)}
+        # group topics by exam, take up to 6 per exam so multiple exams have notes
+        topics = await db.topics.find({}, {"_id": 0}).to_list(5000)
+        by_exam = {}
+        for t in topics:
+            by_exam.setdefault(t["exam_id"], []).append(t)
+        notes = []
+        for exam_id, ts in by_exam.items():
+            for t in ts[:6]:
+                subj = subjects.get(t["subject_id"], {})
+                notes.append({
+                    "id": _id(),
+                    "title": f"{t['name']} — Konu Anlatımı",
+                    "description": f"{subj.get('name','')} dersi {t['name']} konusunun özet ders notu.",
+                    "exam_id": exam_id, "subject_id": t["subject_id"], "topic_id": t["id"],
+                    "content": (
+                        f"{t['name']} konusu {subj.get('name','')} dersinin önemli başlıklarındandır. "
+                        "Aşağıda temel kavramlar, sık yapılan hatalar ve çözüm stratejileri özetlenmiştir.\n\n"
+                        "Temel kavramlar: tanım, temel özellikler, formüller ve kullanım alanları dikkatle çalışılmalıdır. "
+                        "Sık yapılan hatalar genellikle işlem hataları ve kavram yanılgılarından kaynaklanır.\n\n"
+                        "Strateji: önce kolay sorularla ısın, ardından orta ve zor seviyeye geç. Süreni ölç; "
+                        "90 saniyeyi aşan soruları işaretle ve sona bırak. Yanlışlarını mutlaka tekrar çöz."
+                    ),
+                    "video_url": "", "file_path": None, "file_name": None,
+                    "status": "published", "published_at": now_iso(), "created_at": now_iso(),
+                })
+        if notes:
+            await db.study_notes.insert_many(notes)
+
+    # Scoring configs: rebuild when missing OR section names no longer match the exam's subjects
+    exams = await db.exams.find({}).to_list(200)
+    for e in exams:
+        subs = await db.subjects.find({"exam_id": e["id"]}).sort("order", 1).to_list(100)
+        if not subs:
+            continue
+        sub_names = {s["name"] for s in subs}
+        cfg = e.get("scoring_config")
+        if cfg and cfg.get("sections") and {sec["name"] for sec in cfg["sections"]} == sub_names:
+            continue
+        sections = [{"name": s["name"], "question_count": 20, "wrong_penalty": 0.25, "coefficient": 1.0} for s in subs]
+        await db.exams.update_one({"id": e["id"]}, {"$set": {"scoring_config": {
+            "sections": sections, "base_score": 100.0, "multiplier": 1.0, "score_type": "Ağırlıklı Puan",
+        }}})

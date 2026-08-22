@@ -5,7 +5,7 @@ import os
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / ".env")
 
-from fastapi import FastAPI, APIRouter, HTTPException, Request, Response, Depends, Query
+from fastapi import FastAPI, APIRouter, HTTPException, Request, Response, Depends, Query, UploadFile, File, Form, Header
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
 from pydantic import BaseModel, EmailStr, Field
@@ -14,9 +14,13 @@ from datetime import datetime, timezone, timedelta
 import logging
 import uuid
 import secrets
+import io
+import csv
 
 import auth as A
-from seed import seed_content, now_iso
+import storage as S
+import ai as AICoach
+from seed import seed_content, seed_extras, now_iso
 
 mongo_url = os.environ["MONGO_URL"]
 client = AsyncIOMotorClient(mongo_url)
@@ -684,6 +688,275 @@ def _after(iso_str, dt):
         return True
 
 
+# ============ STUDY NOTES ============
+class NoteIn(BaseModel):
+    title: str
+    description: str = ""
+    exam_id: str
+    subject_id: Optional[str] = None
+    topic_id: Optional[str] = None
+    content: str = ""
+    video_url: str = ""
+    file_path: Optional[str] = None
+    file_name: Optional[str] = None
+    status: str = "published"
+
+
+@api.get("/notes")
+async def list_notes(user: dict = Depends(current_user), exam_id: Optional[str] = None,
+                     subject_id: Optional[str] = None, topic_id: Optional[str] = None):
+    q = {"status": "published"}
+    if exam_id:
+        q["exam_id"] = exam_id
+    if subject_id:
+        q["subject_id"] = subject_id
+    if topic_id:
+        q["topic_id"] = topic_id
+    notes = await db.study_notes.find(q, {"_id": 0}).sort("created_at", -1).to_list(300)
+    return notes
+
+
+@api.get("/notes/{note_id}")
+async def get_note(note_id: str, user: dict = Depends(current_user)):
+    n = await db.study_notes.find_one({"id": note_id}, {"_id": 0})
+    if not n:
+        raise HTTPException(status_code=404, detail="Ders notu bulunamadı")
+    return n
+
+
+@api.get("/topics/{topic_id}/note")
+async def topic_note(topic_id: str, user: dict = Depends(current_user)):
+    n = await db.study_notes.find_one({"topic_id": topic_id, "status": "published"}, {"_id": 0})
+    return n or {}
+
+
+@api.post("/admin/notes")
+async def create_note(body: NoteIn, admin: dict = Depends(admin_user)):
+    doc = {"id": str(uuid.uuid4()), **body.model_dump(),
+           "published_at": now_iso(), "created_at": now_iso()}
+    await db.study_notes.insert_one(doc)
+    doc.pop("_id", None)
+    return doc
+
+
+@api.put("/admin/notes/{note_id}")
+async def update_note(note_id: str, body: NoteIn, admin: dict = Depends(admin_user)):
+    await db.study_notes.update_one({"id": note_id}, {"$set": body.model_dump()})
+    return await db.study_notes.find_one({"id": note_id}, {"_id": 0})
+
+
+@api.delete("/admin/notes/{note_id}")
+async def delete_note(note_id: str, admin: dict = Depends(admin_user)):
+    await db.study_notes.delete_one({"id": note_id})
+    return {"ok": True}
+
+
+# ============ FILE UPLOAD / STORAGE ============
+@api.post("/admin/upload")
+async def upload_file(file: UploadFile = File(...), admin: dict = Depends(admin_user)):
+    ext = (file.filename.rsplit(".", 1)[-1] if "." in file.filename else "bin").lower()
+    path = f"{S.APP_NAME}/uploads/{uuid.uuid4()}.{ext}"
+    data = await file.read()
+    content_type = file.content_type or S.MIME_TYPES.get(ext, "application/octet-stream")
+    result = S.put_object(path, data, content_type)
+    await db.files.insert_one({
+        "id": str(uuid.uuid4()), "storage_path": result["path"],
+        "original_filename": file.filename, "content_type": content_type,
+        "size": result.get("size", len(data)), "is_deleted": False,
+        "created_at": now_iso(),
+    })
+    return {"path": result["path"], "name": file.filename, "content_type": content_type}
+
+
+@api.get("/files/{path:path}")
+async def download_file(path: str, authorization: str = Header(None), auth: str = Query(None)):
+    token = None
+    if authorization and authorization.startswith("Bearer "):
+        token = authorization[7:]
+    elif auth:
+        token = auth
+    if not token:
+        raise HTTPException(status_code=401, detail="Yetkisiz")
+    record = await db.files.find_one({"storage_path": path, "is_deleted": False})
+    if not record:
+        raise HTTPException(status_code=404, detail="Dosya bulunamadı")
+    data, ct = S.get_object(path)
+    return Response(content=data, media_type=record.get("content_type", ct))
+
+
+# ============ BULK CSV IMPORT ============
+@api.post("/admin/questions/import-csv")
+async def import_csv(file: UploadFile = File(...), admin: dict = Depends(admin_user)):
+    raw = (await file.read()).decode("utf-8-sig", errors="replace")
+    reader = csv.DictReader(io.StringIO(raw))
+    required = ["exam", "subject", "topic", "question", "option_a", "option_b", "option_c", "option_d", "correct_answer"]
+
+    exams = {e["name"].strip().lower(): e for e in await db.exams.find({}, {"_id": 0}).to_list(500)}
+    subjects = await db.subjects.find({}, {"_id": 0}).to_list(2000)
+    topics = await db.topics.find({}, {"_id": 0}).to_list(5000)
+    existing_q = {q["question_text"].strip().lower() for q in await db.questions.find({}, {"question_text": 1, "_id": 0}).to_list(100000)}
+
+    inserted, errors, duplicates = 0, [], 0
+    docs = []
+    for i, row in enumerate(reader, start=2):
+        row = {(k or "").strip().lower(): (v or "").strip() for k, v in row.items()}
+        missing = [c for c in required if not row.get(c)]
+        if missing:
+            errors.append({"row": i, "reason": f"Eksik alan: {', '.join(missing)}"})
+            continue
+        exam = exams.get(row["exam"].lower())
+        if not exam:
+            errors.append({"row": i, "reason": f"Sınav bulunamadı: {row['exam']}"})
+            continue
+        subj = next((s for s in subjects if s["exam_id"] == exam["id"] and s["name"].strip().lower() == row["subject"].lower()), None)
+        if not subj:
+            errors.append({"row": i, "reason": f"Ders bulunamadı: {row['subject']}"})
+            continue
+        topic = next((t for t in topics if t["subject_id"] == subj["id"] and t["name"].strip().lower() == row["topic"].lower()), None)
+        if not topic:
+            errors.append({"row": i, "reason": f"Konu bulunamadı: {row['topic']}"})
+            continue
+        if row["correct_answer"].upper() not in ["A", "B", "C", "D", "E"]:
+            errors.append({"row": i, "reason": "Geçersiz cevap anahtarı"})
+            continue
+        if row["question"].lower() in existing_q:
+            duplicates += 1
+            continue
+        existing_q.add(row["question"].lower())
+        docs.append({
+            "id": str(uuid.uuid4()), "exam_id": exam["id"], "subject_id": subj["id"],
+            "topic_id": topic["id"], "subtopic_id": None, "question_text": row["question"],
+            "question_type": "multiple_choice",
+            "option_a": row["option_a"], "option_b": row["option_b"], "option_c": row["option_c"],
+            "option_d": row["option_d"], "option_e": row.get("option_e", ""),
+            "correct_answer": row["correct_answer"].upper(), "explanation": row.get("explanation", ""),
+            "difficulty": row.get("difficulty", "orta") or "orta", "source": "CSV Import",
+            "year": None, "tags": [subj["name"], topic["name"]], "status": "active",
+            "created_at": now_iso(), "updated_at": now_iso(),
+        })
+        inserted += 1
+    if docs:
+        await db.questions.insert_many(docs)
+    total = inserted + duplicates + len(errors)
+    return {"total": total, "inserted": inserted, "duplicates": duplicates,
+            "error_count": len(errors), "errors": errors[:50]}
+
+
+# ============ SCORING (per-exam configurable) ============
+class ScoringSection(BaseModel):
+    name: str
+    question_count: int = 0
+    wrong_penalty: float = 0.25   # kaç yanlış 1 doğruyu götürür => 1/penalty
+    coefficient: float = 1.0
+
+
+class ScoringConfig(BaseModel):
+    sections: List[ScoringSection]
+    base_score: float = 100.0
+    multiplier: float = 1.0
+    score_type: str = "Ağırlıklı Puan"
+
+
+class CalcSection(BaseModel):
+    name: str
+    correct: int = 0
+    wrong: int = 0
+    blank: int = 0
+
+
+class CalcIn(BaseModel):
+    exam_id: str
+    sections: List[CalcSection]
+
+
+@api.get("/exams/{exam_id}/scoring")
+async def get_scoring(exam_id: str):
+    e = await db.exams.find_one({"id": exam_id}, {"_id": 0})
+    if not e:
+        raise HTTPException(status_code=404, detail="Sınav bulunamadı")
+    cfg = e.get("scoring_config")
+    if cfg and cfg.get("sections"):
+        return cfg
+    subs = await db.subjects.find({"exam_id": exam_id}).sort("order", 1).to_list(100)
+    return {
+        "sections": [{"name": s["name"], "question_count": 20, "wrong_penalty": 0.25, "coefficient": 1.0} for s in subs],
+        "base_score": 100.0, "multiplier": 1.0, "score_type": "Ham Puan",
+    }
+
+
+@api.put("/admin/exams/{exam_id}/scoring")
+async def set_scoring(exam_id: str, body: ScoringConfig, admin: dict = Depends(admin_user)):
+    await db.exams.update_one({"id": exam_id}, {"$set": {"scoring_config": body.model_dump()}})
+    return {"ok": True, "scoring_config": body.model_dump()}
+
+
+@api.post("/score/calculate")
+async def calculate_score(body: CalcIn, user: dict = Depends(current_user)):
+    e = await db.exams.find_one({"id": body.exam_id}, {"_id": 0})
+    if not e:
+        raise HTTPException(status_code=404, detail="Sınav bulunamadı")
+    cfg = e.get("scoring_config") or {"sections": [], "base_score": 100.0, "multiplier": 1.0, "score_type": "Ham Puan"}
+    cfg_secs = {s["name"]: s for s in cfg.get("sections", [])}
+    breakdown = []
+    weighted = 0.0
+    total_net = 0.0
+    for sec in body.sections:
+        conf = cfg_secs.get(sec.name, {"wrong_penalty": 0.25, "coefficient": 1.0})
+        penalty = conf.get("wrong_penalty", 0.25)
+        coef = conf.get("coefficient", 1.0)
+        net = round(sec.correct - sec.wrong * penalty, 2)
+        total_net += net
+        weighted += net * coef
+        breakdown.append({"name": sec.name, "net": net, "coefficient": coef,
+                          "correct": sec.correct, "wrong": sec.wrong, "blank": sec.blank})
+    score = round(cfg.get("base_score", 100.0) + weighted * cfg.get("multiplier", 1.0), 2)
+    return {"score": score, "total_net": round(total_net, 2), "score_type": cfg.get("score_type", "Ham Puan"),
+            "breakdown": breakdown}
+
+
+# ============ AI COACH (LLM) ============
+@api.post("/ai/coach")
+async def ai_coach(user: dict = Depends(current_user)):
+    uid = str(user["_id"])
+    prof = await topic_proficiency(uid)
+    results = await db.user_test_results.find({"user_id": uid}, {"_id": 0}).to_list(200)
+    avg_score = round(sum(r["score"] for r in results) / len(results), 1) if results else 0
+    all_ans = await db.user_answers.count_documents({"user_id": uid})
+    corr = await db.user_answers.count_documents({"user_id": uid, "is_correct": True})
+    ans_nb = await db.user_answers.count_documents({"user_id": uid, "is_blank": False})
+    overall = round(corr / ans_nb * 100, 1) if ans_nb else 0
+    weak = [f"{p['topic_name']} (%{p['proficiency']})" for p in prof if p["status"] != "İyi"][:5]
+    strong = [f"{p['topic_name']} (%{p['proficiency']})" for p in prof if p["status"] == "İyi"][:5]
+
+    target_exam = ""
+    if user.get("target_exams"):
+        te = await db.exams.find_one({"id": user["target_exams"][0]}, {"_id": 0})
+        target_exam = te["name"] if te else ""
+
+    context = {
+        "user_id": uid, "target_exam": target_exam, "target_score": user.get("target_score"),
+        "avg_score": avg_score, "daily_goal": user.get("daily_goal", 20),
+        "total_solved": all_ans, "overall_success": overall, "weak": weak, "strong": strong,
+    }
+    try:
+        result = await AICoach.generate_coach(context)
+    except Exception as ex:
+        logger.error(f"AI coach error: {ex}")
+        raise HTTPException(status_code=502, detail="AI önerisi şu an üretilemedi, lütfen tekrar deneyin.")
+
+    rec = {"id": str(uuid.uuid4()), "user_id": uid, "result": result, "created_at": now_iso()}
+    await db.ai_recommendations.insert_one(dict(rec))
+    rec.pop("_id", None)
+    return rec
+
+
+@api.get("/ai/coach/latest")
+async def ai_coach_latest(user: dict = Depends(current_user)):
+    rec = await db.ai_recommendations.find_one(
+        {"user_id": str(user["_id"])}, {"_id": 0}, sort=[("created_at", -1)])
+    return rec or {}
+
+
 # ============ ADMIN ANALYTICS ============
 @api.get("/admin/stats")
 async def admin_stats(admin: dict = Depends(admin_user)):
@@ -729,6 +1002,12 @@ async def startup():
     await db.user_test_results.create_index([("user_id", 1)])
     await A.seed_admin(db)
     await seed_content(db)
+    await seed_extras(db)
+    try:
+        S.init_storage()
+        logger.info("Storage initialized")
+    except Exception as e:
+        logger.error(f"Storage init failed: {e}")
     logger.info("Startup complete: admin + content seeded")
 
 

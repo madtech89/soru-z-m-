@@ -1,8 +1,10 @@
 import { NavLink, Outlet, useNavigate } from "react-router-dom";
+import { useState } from "react";
+import { AnimatePresence, motion } from "framer-motion";
 import { useAuth } from "@/context/AuthContext";
 import {
   LayoutDashboard, GraduationCap, FileText, Library, Target,
-  Trophy, Brain, User, LogOut, Sparkles, ShieldCheck,
+  Trophy, Brain, User, LogOut, Sparkles, ShieldCheck, BookOpen, Calculator, Menu, X,
 } from "lucide-react";
 
 const NAV = [
@@ -11,6 +13,8 @@ const NAV = [
   { to: "/app/denemeler", label: "Denemeler", icon: FileText },
   { to: "/app/soru-bankasi", label: "Soru Bankası", icon: Library },
   { to: "/app/eksiklerim", label: "Eksiklerim", icon: Target },
+  { to: "/app/ders-notlari", label: "Ders Notları", icon: BookOpen },
+  { to: "/app/puan-hesapla", label: "Puan Hesapla", icon: Calculator },
   { to: "/app/siralama", label: "Sıralama", icon: Trophy },
   { to: "/app/ai-koc", label: "AI Koç", icon: Brain },
   { to: "/app/profil", label: "Profil", icon: User },
@@ -27,6 +31,7 @@ const MOBILE = [
 export default function AppLayout() {
   const { user, logout } = useAuth();
   const nav = useNavigate();
+  const [menu, setMenu] = useState(false);
 
   const doLogout = async () => {
     await logout();
@@ -84,10 +89,41 @@ export default function AppLayout() {
           </span>
           <span className="font-heading font-extrabold text-lg">Netor</span>
         </div>
-        <button onClick={doLogout} className="text-zinc-500" data-testid="logout-btn-mobile">
-          <LogOut size={18} />
+        <button onClick={() => setMenu(true)} className="text-zinc-600" data-testid="mobile-menu-btn">
+          <Menu size={22} />
         </button>
       </header>
+
+      {/* Mobile menu drawer */}
+      <AnimatePresence>
+        {menu && (
+          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+            className="lg:hidden fixed inset-0 z-50 bg-black/40" onClick={() => setMenu(false)}>
+            <motion.div initial={{ x: "100%" }} animate={{ x: 0 }} exit={{ x: "100%" }} transition={{ type: "tween", duration: 0.28 }}
+              onClick={(e) => e.stopPropagation()} className="absolute right-0 top-0 bottom-0 w-72 bg-white p-5 overflow-auto">
+              <div className="flex items-center justify-between mb-6">
+                <span className="font-heading font-extrabold text-lg">Menü</span>
+                <button onClick={() => setMenu(false)} data-testid="mobile-menu-close"><X size={22} className="text-zinc-400" /></button>
+              </div>
+              <nav className="space-y-1">
+                {NAV.map((n) => (
+                  <NavLink key={n.to} to={n.to} end={n.end} onClick={() => setMenu(false)} className={linkCls} data-testid={`mmenu-${n.label}`}>
+                    <n.icon size={18} /> {n.label}
+                  </NavLink>
+                ))}
+                {user?.role === "admin" && (
+                  <NavLink to="/app/admin" onClick={() => setMenu(false)} className={linkCls} data-testid="mmenu-admin">
+                    <ShieldCheck size={18} /> Admin
+                  </NavLink>
+                )}
+                <button onClick={doLogout} className="flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-sm font-medium text-subject-turkce w-full mt-2">
+                  <LogOut size={18} /> Çıkış yap
+                </button>
+              </nav>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       {/* Content */}
       <main className="lg:pl-64 pb-24 lg:pb-10">

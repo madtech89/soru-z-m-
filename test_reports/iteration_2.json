@@ -1,0 +1,62 @@
+{
+  "summary": "Iteration 2 e2e testing of the 4 new Netor features (Ders Notlari, CSV bulk import, per-exam scoring, AI Koc) plus regression. Backend: 82 pytest tests (54 regression + 28 new) all pass, including a single real GPT-5.4 AI-coach call that returned a valid Turkish analysis + exactly 7-day plan. Frontend: notes list/modal/video/auto-open from weak topics, score calculator, AI Koc render, and all 5 admin tabs (note+file upload, CSV report, scoring save+persistence) verified on desktop and mobile. One HIGH frontend bug found: Puan Hesapla hangs on an infinite spinner for exams whose scoring_config is null (TYT, AYT), plus several data/seed and navigation gaps.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "GET /api/exams/{exam_id}/scoring", "issue": "Returns HTTP 200 with body `null` for exams that have no scoring_config (TYT, AYT). Should return a default config or {} so clients can render an empty state; current null directly causes the frontend infinite spinner."},
+      {"endpoint": "seed_extras (startup)", "issue": "scoring_config is only seeded for exams that already have subjects, so TYT and AYT permanently have no config (skip-if-exists makes it non self-healing). YKS config contains only 1 section (Matematik) although YKS has 5 subjects (Matematik, Turkce, Fizik, Kimya, Tarih), and has multiplier 0.5 / score_type 'Test' - looks like leftover dev data; user-facing calculator therefore only covers Matematik."},
+      {"endpoint": "seed_extras (notes)", "issue": "All 12 seeded study notes belong to YKS only; every other exam filter on /app/ders-notlari shows the empty state."},
+      {"endpoint": "seed_extras (notes video_url)", "issue": "Seeded note video_url points to a Rick Astley 'Never Gonna Give You Up' YouTube embed (rickroll placeholder) - irrelevant/unprofessional content in an exam-prep product."},
+      {"endpoint": "CORS middleware (server.py)", "issue": "allow_origins=['*'] combined with allow_credentials=True. Browsers reject credentialed requests against a wildcard origin; auth also sets httpOnly cookies. Use explicit origin list."},
+      {"endpoint": "GET /api/questions", "issue": "No free-text search parameter, so imported/created questions can only be located via exam/subject/topic filters (test had to work around it)."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "PuanHesapla", "issue": "Selecting an exam with no scoring_config (TYT, AYT) leaves the page in a permanent loading spinner: `!cfg ? <Spinner/>` never resolves because the API returns null. No section rows, no Hesapla button, no empty state, and no .catch on either api.get call.", "selector": "[data-testid=\"score-exam-TYT\"] -> .animate-spin", "priority": "HIGH"},
+      {"component": "Admin > Puanlama tab", "issue": "No way to add or remove scoring sections. For TYT/AYT (0 sections) the admin only gets base_score/multiplier/score_type fields and can save an empty config, so the broken exams cannot be fixed from the UI.", "selector": "[data-testid=\"admin-scoring-exam\"]", "priority": "MEDIUM"},
+      {"component": "AppLayout mobile bottom nav", "issue": "Mobile nav only exposes Ana Sayfa/Denemeler/Sorular/Eksik/Profil - the three new features (Ders Notlari, Puan Hesapla, AI Koc) are unreachable on mobile except via the WeakTopics deep link.", "selector": "[data-testid^=\"mnav-\"]", "priority": "MEDIUM"},
+      {"component": "DersNotlari note modal", "issue": "Note content is raw markdown rendered as plain text ('# Fonksiyonlar', '## Temel Kavramlar', '- ...' visible literally). Needs a markdown renderer or plain-text seed content.", "selector": "[data-testid=\"note-modal\"]", "priority": "MEDIUM"}
+    ],
+    "integration_issues": [
+      {"flow": "Puan Hesapla for TYT/AYT", "issue": "GET /api/exams/{id}/scoring returns null -> component stuck loading; needs backend default + frontend fallback/error state.", "affected_selectors": ["[data-testid=\"score-calc\"]", "[data-testid=\"score-result\"]"]},
+      {"flow": "Ders Notlari exam filter", "issue": "Filtering by any exam other than YKS always yields the empty state (data gap, not a code bug).", "affected_selectors": ["[data-testid=\"note-filter-TYT\"]"]}
+    ],
+    "design_issues": [
+      {"screen": "Login page (desktop 1920)", "issues": ["Right-hand hero panel is mostly an empty white/grey gradient; the image only fills the top ~1/3 of the panel"]},
+      {"screen": "Ders Notlari modal", "issues": ["Raw markdown symbols shown to users", "Seeded video is an unrelated music video"]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iteration2.py",
+    "/app/backend/tests/backend_test.py",
+    "/app/test_reports/pytest/pytest_results.xml"
+  ],
+  "action_items": [
+    "FIX HIGH: PuanHesapla - handle null scoring_config (backend: return default {sections:[],base_score:100,multiplier:1,score_type:'Ham Puan'} or 404-with-message; frontend: fallback config + empty state + .catch error state).",
+    "Seed/repair scoring_config for ALL exams (TYT, AYT currently null) and rebuild the YKS config from its 5 subjects instead of the leftover single 'Matematik' section with multiplier 0.5 / score_type 'Test'.",
+    "Add 'Bolum ekle / kaldir' controls to the Admin Puanlama tab so section lists can be created and edited.",
+    "Seed study notes for exams other than YKS and replace the Rick Astley placeholder video_url with real/neutral embeds.",
+    "Render note content as markdown (or store plain text).",
+    "Add Ders Notlari / Puan Hesapla / AI Koc to the mobile bottom nav (or a 'More' sheet).",
+    "Restrict CORS allow_origins to explicit origins since allow_credentials=True and auth sets httpOnly cookies."
+  ],
+  "critical_code_review_comments": [
+    "PuanHesapla.jsx L17-24: api.get('/exams') and api.get(`/exams/${id}/scoring`) have no .catch and no error state; any failure leaves a permanent spinner (same pattern in DersNotlari.jsx L51-68).",
+    "server.py get_scoring returns e.get('scoring_config') which can be null - endpoint contract should never return a bare null; return a default object.",
+    "seed.py seed_extras: `if e.get('scoring_config'): continue` means a partially/incorrectly seeded config never repairs itself; consider versioned seed or rebuild when section names no longer match the exam's subjects.",
+    "server.py is 1010 lines - split notes/upload/csv/scoring/ai into routers for maintainability.",
+    "import_csv loads every existing question_text into memory (to_list(100000)) to dedupe; use a unique index or per-batch queries for scale."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iteration2.py (new)",
+    "/app/frontend/src/app/DersNotlari.jsx (added data-testid note-filter-all / note-filter-{examName} on exam filter buttons)"
+  ],
+  "success_rate": {"backend": "100% (82/82)", "frontend": "88% (all new flows work except Puan Hesapla for exams without scoring config; plus nav/content gaps)"},
+  "seed_data_creation": "No permanent seed data. Test-created data (TEST_ notes/questions/topics/subjects, uploaded qa_note.txt/TEST_note.txt file records, TEST_UI admin note, CSV-imported TEST_ questions) was deleted after the run; orphaned user_answers left by earlier iterations were also purged (they made backend_test.py::test_proficiency fail with topic_name 'Bilinmeyen').",
+  "should_call_test_agent_after_fix": true,
+  "should_main_agent_self_test": false,
+  "test_credentials": "admin@sinav.com/admin123, demo@sinav.com/demo123 (from /app/memory/test_credentials.md) - both valid",
+  "context_for_next_testing_agent": "Backend suites: /app/backend/tests/backend_test.py (iteration 1 regression) and /app/backend/tests/test_iteration2.py (notes, upload/files, CSV import, scoring, AI coach). Run with `cd /app/backend && python -m pytest tests/ -q --deselect tests/test_iteration2.py::TestAICoach::test_generate_and_latest` to avoid an extra paid LLM call; the AI-coach test was executed once and passed (7-day plan, valid JSON). Auth playbook checks done: bcrypt $2b$ hashes, httpOnly+Secure+SameSite=None access/refresh cookies set on login, brute-force lockout after 5 fails (covered in backend_test.py), seed_admin idempotent. Outstanding CORS wildcard issue. Note: test runs create TEST_ questions/topics/subjects - purge them (regex ^TEST_) plus orphaned user_answers afterwards, otherwise test_proficiency fails with topic_name 'Bilinmeyen'. Not retested: full frontend deneme start->submit->result UI walkthrough (covered by backend flow test only).",
+  "rca_of_the_issue": "Puan Hesapla infinite spinner: seed_extras only writes scoring_config for exams that have at least one subject, so TYT/AYT keep scoring_config=null. GET /api/exams/{id}/scoring returns that null with HTTP 200; PuanHesapla.jsx gates the whole UI on `!cfg ? <Spinner/>` and its api.get has no catch, so the page loads forever. Repro: login demo@sinav.com -> /app/puan-hesapla -> click TYT. Mitigation: return a default scoring config from the backend for unconfigured exams and add a frontend fallback/empty state; also backfill configs for all exams in the seed."
+}
