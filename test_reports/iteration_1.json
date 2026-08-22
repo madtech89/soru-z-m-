@@ -1,0 +1,47 @@
+{
+  "summary": "Full backend + frontend E2E test of Netor exam-prep platform. Backend: created pytest suite (54 tests) covering auth (register/login/me/lockout/profile), exam hierarchy, question bank + filters + practice answering, deneme start/submit/scoring/results, dashboard/proficiency/leaderboard analytics and admin RBAC/CRUD — 54/54 pass. Frontend: verified landing, register, login, dashboard, exam selection persistence, question bank (answer feedback, filters, pagination), full deneme flow (timer countdown, option select, prev/next, mark, question list jump, submit -> result page with correct score 62.5 for net 1.25/10), eksiklerim, siralama tabs, AI Koc, profile edit+save, logout + protected-route redirect, admin panel as admin, mobile bottom nav with zero horizontal overflow. No console/page errors anywhere. Core product works end-to-end; only minor issues found.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "POST /api/auth/login", "issue": "Brute-force lockout key is f\"{request.client.host}:{email}\". Behind the k8s ingress request.client.host is the proxy pod IP and rotates between replicas (observed 10.208.135.204 / .205), so attempt counters split and lockout only fires after ~11 failures instead of 5. Key on email (and/or X-Forwarded-For first hop) instead."},
+      {"endpoint": "CORS middleware (server.py:714)", "issue": "allow_origins=[\"*\"] combined with allow_credentials=True is rejected by browsers for credentialed requests, and the CORS_ORIGINS env var is defined in backend/.env but never used. httpOnly cookies set by login therefore cannot work cross-origin (app happens to work only because the frontend uses the Bearer token). Use explicit origins from CORS_ORIGINS."},
+      {"endpoint": "POST /api/tests/{id}/start", "issue": "Every page visit creates a new test_session row; abandoned sessions are never expired/cleaned up (grows unbounded)."},
+      {"endpoint": "POST /api/admin/questions & /admin/questions/bulk", "issue": "exam_id/subject_id/topic_id are not validated against existing docs — bulk insert with subject_id='s1', topic_id='t1' succeeded, creating orphan questions that later show as topic_name 'Bilinmeyen' in proficiency."},
+      {"endpoint": "GET /api/questions", "issue": "status/result filters load the user's entire user_answers collection into memory (to_list(100000)) on every request; same in /dashboard and /topics/proficiency. Will not scale."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "Dashboard 7-day chart", "issue": "Series returns 7 points but only 6 x-axis labels render (16.08 tick missing / clipped) — chart appears to show 6 days.", "selector": "Son 7 Gün Gelişimi card", "priority": "LOW"},
+      {"component": "ExamPlayer", "issue": "Bitir (submit-exam) submits immediately with no confirmation dialog even with unanswered questions — easy accidental submit.", "selector": "[data-testid=\"submit-exam\"]", "priority": "LOW"}
+    ],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Soru Bankası / Sıralama filters", "issues": ["Native browser <select> elements used for exam/subject/result/exam-filter instead of the shadcn Select component used elsewhere — inconsistent styling with the rest of the UI"]},
+      {"screen": "Testability", "issues": ["Leaderboard rows have no data-testid (only lb-period-*/lb-metric-*/lb-exam), so row/rank assertions are not possible", "Dashboard.jsx has zero data-testid attributes — key metrics (solved_today, avg_score, overall_success) cannot be asserted reliably", "Result page score/correct/wrong/blank/net values have no data-testid", "QuestionBank option testids are dynamic (qb-{uuid}-opt-A) while ExamPlayer uses option-A..E; a stable pattern would help"]}
+    ]
+  },
+  "test_report_links": ["/app/backend/tests/backend_test.py", "/app/backend/tests/conftest.py", "/app/test_reports/pytest/pytest_results.xml"],
+  "action_items": [
+    "Fix login lockout keying (use email, not proxy client IP) so 5-attempt lockout actually triggers at 5.",
+    "Replace CORS allow_origins=['*'] + allow_credentials=True with explicit origins from CORS_ORIGINS env.",
+    "Validate exam_id/subject_id/topic_id references in admin question/subject/topic creation endpoints.",
+    "Render all 7 ticks in the dashboard 7-day chart (or label it as 6 days).",
+    "Add data-testid to Dashboard metrics, Result values and Leaderboard rows.",
+    "Optional: add confirm step before Bitir when questions are unanswered; clean up abandoned test_sessions."
+  ],
+  "critical_code_review_comments": [
+    "server.py is 738 lines and mixes auth, content, analytics and admin routers — split into routers/ modules before it grows further.",
+    "Analytics endpoints re-read all of user_answers per request (to_list(100000)); move aggregation to MongoDB aggregation pipelines.",
+    "auth.py set_auth_cookies is called on login/register but never actually used by the frontend (Bearer only) while CORS wildcard makes them unusable — either finish the cookie flow with explicit origins or drop it.",
+    "Login lockout writes locked_until on the first failure but the gate is count>=5; combined with the rotating proxy IP the security control is effectively unreliable."
+  ],
+  "updated_files": ["/app/backend/tests/backend_test.py", "/app/backend/tests/conftest.py"],
+  "success_rate": {"backend": "100% (54/54 pytest)", "frontend": "100% of tested flows functional (minor cosmetic/testability issues only)"},
+  "seed_data_creation": "Created and then deleted throwaway users on domain @qatest-example.com plus TEST_ exam/subject/topic/question docs (cleaned up from MongoDB). Left behind: 1 real deneme submission for demo@sinav.com (YKS Başlangıç Denemesi, score 62.5) and a few practice answers from UI testing; 1 registered UI user qa178741354862@example.com; demo user's target_exams were toggled to TYT and restored to YKS.",
+  "should_call_test_agent_after_fix": false,
+  "should_main_agent_self_test": true,
+  "test_credentials": "admin@sinav.com/admin123, demo@sinav.com/demo123 (from /app/memory/test_credentials.md) — both valid and working",
+  "context_for_next_testing_agent": "Backend suite lives in /app/backend/tests/ (conftest.py has demo/admin session fixtures + random_email; note pydantic EmailStr rejects .test/.local TLDs — use @qatest-example.com). Run: cd /app/backend/tests && python -m pytest . -q (pytest.ini forces -n 2 --dist loadscope). Frontend testid notes: QuestionBank options are qb-{questionId}-opt-A..E (not option-A), ExamPlayer uses option-A..E / prev-q / next-q / mark-question / toggle-list / goto-q-{i} / submit-exam / exam-timer, exam select cards are exam-{NAME} and toggle (clicking an already-selected exam deselects it). All flows verified working as of this iteration.",
+  "rca_of_the_issue": "Lockout failure RCA: db.login_attempts documents are keyed by '{proxy_pod_ip}:{email}'; the preview ingress has multiple proxy pods so consecutive failed logins land on different identifiers, splitting the counter. Reproduce: POST /api/auth/login with a wrong password ~11 times for one email and inspect login_attempts — two docs appear with counts summing to the attempts. Mitigation: key the lockout document on the normalized email only."
+}

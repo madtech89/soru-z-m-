@@ -1,0 +1,83 @@
+{
+  "theme_strategy": "Light mode base chosen to prevent eye fatigue during long study sessions, enhanced by a context-aware 'multi-tone' color system. Colors dynamically shift based on the subject context (Math is Indigo, Turkish is Rose, Science is Emerald) to keep the experience visually stimulating, fun, and focus-enhancing without being overwhelming.",
+  "typography": {
+    "headings": "Outfit",
+    "body": "Figtree",
+    "special": "Playfair Display (Used selectively for editorial marquees, manifesto numbers, and quotes to break the corporate SaaS feel and add prestige.)",
+    "rules": "H1 max text-5xl/6xl with tight tracking (tracking-tighter). Body uses leading-relaxed. Never use Inter for headings."
+  },
+  "colors": {
+    "background": {
+      "main": "#FBFBF9",
+      "card": "#FFFFFF",
+      "glass": "rgba(255, 255, 255, 0.7)"
+    },
+    "text": {
+      "primary": "#18181B",
+      "secondary": "#52525B",
+      "muted": "#A1A1AA",
+      "inverted": "#FFFFFF"
+    },
+    "multi_tone_subjects": {
+      "matematik": "#4F46E5",
+      "turkce": "#F43F5E",
+      "fen": "#10B981",
+      "sosyal": "#F59E0B",
+      "ai_coach": "#EC4899",
+      "general": "#0F172A"
+    }
+  },
+  "visual_enhancers": {
+    "glassmorphism": "backdrop-blur-xl bg-white/70 border border-white/40 shadow-sm",
+    "shadows": "Ambient diffuse shadows for depth: shadow-[0_8px_32px_rgba(0,0,0,0.04)]",
+    "borders": "Crisp 1px border-zinc-200 for structure. On active subject cards, border tint matches the subject color.",
+    "textures": "Subtle noise overlay (opacity 2-3%) on the landing page background to remove digital flatness."
+  },
+  "components": {
+    "navigation": "Marketing: Sticky crystal glassmorphic header. App: Sidebar on desktop, modern bottom navigation bar on mobile (fixed bottom, backdrop-blur).",
+    "cards": "Flat solid surfaces with subtle borders. Avoid heavy drop shadows. Hover states apply a slight lift (-translate-y-1) and subject-specific border glow.",
+    "buttons": "Marketing: Pill-shaped (rounded-full) with magnetic hover effect. App: Slightly rounded (rounded-xl) for structural density. Primary buttons use the context's subject color.",
+    "charts": "Recharts with customized tooltips, no generic grids, and stroke colors matching the multi-tone subject system."
+  },
+  "layouts": {
+    "marketing_hero": "Awwwards-level kinetic layout. Asymmetrical structure. Line-by-line masked text reveal using Framer Motion. Real education photography clipped inside custom geometric frames.",
+    "manifesto_chapters": "Bento grid (Tetris Mode A) with wide gaps (gap-8 to gap-12). Numbered chapters (01. Soru Çöz, 02. Analiz) explaining the learning loop.",
+    "marquee": "Slow editorial ribbon using Playfair Display, separating the hero and manifesto sections. Very slow, smooth drift.",
+    "dashboard": "High-Density Grid (Mode B). 'Bugünkü Hedef' (Today's goal) as the dominant visual (col-span-2 or 3). Minimalist stat cards for solved questions and success rate."
+  },
+  "motion": {
+    "libraries": [
+      "framer-motion",
+      "lenis"
+    ],
+    "marketing": "Smooth scroll (Lenis). Staggered text reveals on scroll. Subtle parallax on images.",
+    "app": "Instant feedback. Micro-interactions on buttons (scale down 0.98 on tap). Animated progress bars for weak topic detection."
+  },
+  "accessibility": {
+    "contrast": "Ensure text over subject colors meets APCA contrast standards. Use darker tones for text, lighter for backgrounds.",
+    "data_testid": "MANDATORY: Apply `data-testid` to all interactive UI components (buttons, links, form inputs) for testing."
+  },
+  "media": {
+    "images": {
+      "hero_student_focus": "https://images.unsplash.com/photo-1728455635901-bb16530faf40?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjA2MTJ8MHwxfHNlYXJjaHw0fHxmb2N1c2VkJTIwc3R1ZGVudCUyMHN0dWR5aW5nJTIwYWVzdGhldGljfGVufDB8fHx8MTc4NzQxMTkyOHww&ixlib=rb-4.1.0&q=85",
+      "study_analysis": "https://images.unsplash.com/photo-1514369118554-e20d93546b30?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjA2MTJ8MHwxfHNlYXJjaHwxfHxmb2N1c2VkJTIwc3R1ZGVudCUyMHN0dWR5aW5nJTIwYWVzdGhldGljfGVufDB8fHx8MTc4NzQxMTkyOHww&ixlib=rb-4.1.0&q=85",
+      "abstract_shape_energy": "https://images.unsplash.com/photo-1697033300784-6c9d143a30e2?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NTYxOTJ8MHwxfHNlYXJjaHwzfHxhYnN0cmFjdCUyMGNvbG9yZnVsJTIwZ2VvbWV0cmljJTIwc2hhcGVzfGVufDB8fHx8MTc4NzQwODM0Nnww&ixlib=rb-4.1.0&q=85",
+      "abstract_shape_focus": "https://images.pexels.com/photos/29579755/pexels-photo-29579755.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=650&w=940",
+      "library_background": "https://images.unsplash.com/photo-1760166699654-5d0e10f51994?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjAzMjd8MHwxfHNlYXJjaHwyfHxtaW5pbWFsaXN0JTIwbW9kZXJuJTIwbGlicmFyeSUyMGRlc2t8ZW58MHx8fHwxNzg3NDExOTI4fDA&ixlib=rb-4.1.0&q=85"
+    }
+  },
+  "instructions_to_main_agent": [
+    "1. Setup standard React + Vite + Tailwind project. Install `framer-motion`, `lucide-react`, `recharts`, `clsx`, `tailwind-merge`.",
+    "2. Configure `tailwind.config.js` with the custom colors, fonts (Outfit, Figtree, Playfair Display), and extend spacing/border-radius.",
+    "3. Build the Marketing Landing Page using custom HTML/Tailwind + framer-motion. Avoid standard Shadcn cards here to allow dynamic asymmetrical layouts.",
+    "4. For the Hero Section: Implement a massive kinetic text reveal (staggered line-by-line masked reveal). Clip the hero image inside an elegant geometric frame.",
+    "5. Implement the Slow Marquee using react-fast-marquee or CSS animations. Use Playfair Display and massive gaps (gap-24) to create an elegant editorial ribbon.",
+    "6. Build the SaaS Dashboard using Shadcn UI components but heavily customized. Remove default Vercel-look borders/shadows and apply our crisp, flat-solid aesthetic.",
+    "7. Implement the Multi-Tone Color System contextually: When displaying Math questions/stats, apply Indigo tints. For Turkish, apply Rose tints, etc. Use CSS variables or Tailwind dynamic classes.",
+    "8. Ensure the Dashboard features a high-density grid. The 'Bugünkü Hedef' (Today's Goal) must visually dominate.",
+    "9. Mobile View: Implement a bottom navigation bar for the app interface (Ana Sayfa, Denemeler, İstatistikler, vb.) with backdrop-blur.",
+    "10. Add `data-testid` to EVERY interactive element.",
+    "11. Never use placeholder images. Use the provided Unsplash/Pexels URLs."
+  ],
+  "UNIVERSAL_GUIDELINES_FOR_MAIN_AGENT": "You tend to converge toward generic, 'on distribution' outputs. In frontend design, this creates what users call the 'AI slop' aesthetic. Avoid this: make creative, distinctive frontends that surprise and delight. Don't make generic centered layouts, simplistic gradients, and uniform styling. Create depth through layered design elements. DO NOT apply universal transitions (e.g., transition: all). Always use modern button styles. NEVER use AI assistant Emojis for icons. Every interaction needs micro-animations. Cramped designs look cheap, so use 2-3x more spacing than typical designs."
+}
