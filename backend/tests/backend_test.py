@@ -91,9 +91,10 @@ class TestAuth:
     def test_bcrypt_hash_format(self):
         from pymongo import MongoClient
         from dotenv import dotenv_values
-        env = dotenv_values("/app/backend/.env")
-        c = MongoClient(env["MONGO_URL"])
-        u = c[env["DB_NAME"]].users.find_one({"email": "admin@sinav.com"})
+        from pathlib import Path
+        env = dotenv_values(Path(__file__).parents[1] / ".env")
+        c = MongoClient(env.get("MONGO_URL", "mongodb://127.0.0.1:27017"))
+        u = c[env.get("DB_NAME", "netor_db")].users.find_one({"email": "admin@sinav.com"})
         c.close()
         assert u is not None, "admin user not seeded"
         assert u["password_hash"].startswith("$2b$"), u["password_hash"][:10]

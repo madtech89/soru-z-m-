@@ -1,30 +1,29 @@
 from dotenv import load_dotenv
 from pathlib import Path
 import os
+import uuid
+import secrets
+import csv
+import io
+import logging
+from datetime import datetime, timezone, timedelta
+from typing import List, Optional, Dict, Any
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / ".env")
 
 from fastapi import FastAPI, APIRouter, HTTPException, Request, Response, Depends, Query, UploadFile, File, Form, Header
 from starlette.middleware.cors import CORSMiddleware
-from motor.motor_asyncio import AsyncIOMotorClient
+from sqlalchemy import select, update, delete, func, desc, and_, or_
+from sqlalchemy.ext.asyncio import AsyncSession
 from pydantic import BaseModel, EmailStr, Field
-from typing import List, Optional
-from datetime import datetime, timezone, timedelta
-import logging
-import uuid
-import secrets
-import io
-import csv
 
+from database import engine, AsyncSessionLocal, get_db, init_models
+import models as M
 import auth as A
 import storage as S
 import ai as AICoach
 from seed import seed_content, seed_extras, now_iso
-
-mongo_url = os.environ["MONGO_URL"]
-client = AsyncIOMotorClient(mongo_url)
-db = client[os.environ["DB_NAME"]]
 
 app = FastAPI(title="Sınav Hazırlık Platformu API")
 api = APIRouter(prefix="/api")
@@ -34,12 +33,12 @@ logger = logging.getLogger("sinav")
 
 
 # ---------- Dependencies ----------
-async def current_user(request: Request):
-    return await A.get_current_user_from_db(request, db)
+async def current_user(request: Request, db: AsyncSession = Depends(get_db)):
+    return await A.get_current_user(request, db)
 
 
-async def admin_user(request: Request):
-    user = await A.get_current_user_from_db(request, db)
+async def admin_user(request: Request, db: AsyncSession = Depends(get_db)):
+    user = await A.get_current_user(request, db)
     if user.get("role") != "admin":
         raise HTTPException(status_code=403, detail="Yönetici yetkisi gerekli")
     return user
@@ -143,57 +142,77 @@ class PracticeAnswerIn(BaseModel):
 
 # ============ AUTH ============
 @api.post("/auth/register")
-async def register(body: RegisterIn, response: Response):
+async def register(body: RegisterIn, response: Response, db: AsyncSession = Depends(get_db)):
     email = body.email.lower()
-    if await db.users.find_one({"email": email}):
+    res = await db.execute(select(M.User).where(M.User.email == email))
+    if res.scalars().first():
         raise HTTPException(status_code=400, detail="Bu e-posta zaten kayıtlı")
-    doc = {
-        "email": email,
-        "password_hash": A.hash_password(body.password),
-        "name": body.name,
-        "username": email.split("@")[0],
-        "role": "user",
-        "avatar": "",
-        "target_exams": [],
-        "target_score": None,
-        "daily_goal": 20,
-        "xp": 0,
-        "streak": 0,
-        "created_at": now_iso(),
-    }
-    res = await db.users.insert_one(doc)
-    uid = str(res.inserted_id)
+
+    uid = str(uuid.uuid4())
+    now_str = now_iso()
+    user_obj = M.User(
+        id=uid,
+        email=email,
+        password_hash=A.hash_password(body.password),
+        name=body.name,
+        username=email.split("@")[0],
+        role="user",
+        avatar="",
+        target_exams=[],
+        target_score=None,
+        daily_goal=20,
+        xp=0,
+        streak=0,
+        created_at=now_str,
+        updated_at=now_str,
+    )
+    db.add(user_obj)
+    await db.commit()
+
     access = A.create_access_token(uid, email)
     refresh = A.create_refresh_token(uid)
     A.set_auth_cookies(response, access, refresh)
-    doc["_id"] = res.inserted_id
-    return {"user": A.public_user(doc), "token": access}
+    return {"user": user_obj.to_dict(), "token": access}
 
 
 @api.post("/auth/login")
-async def login(body: LoginIn, response: Response, request: Request):
+async def login(body: LoginIn, response: Response, request: Request, db: AsyncSession = Depends(get_db)):
     email = body.email.lower()
     ident = email
-    attempt = await db.login_attempts.find_one({"identifier": ident})
-    if attempt and attempt.get("count", 0) >= 5:
-        locked_until = attempt.get("locked_until")
-        if locked_until and datetime.fromisoformat(locked_until) > datetime.now(timezone.utc):
+
+    # Check login attempts
+    att_res = await db.execute(select(M.LoginAttempt).where(M.LoginAttempt.identifier == ident))
+    attempt = att_res.scalars().first()
+    if attempt and attempt.count >= 5:
+        if attempt.locked_until and datetime.fromisoformat(attempt.locked_until) > datetime.now(timezone.utc):
             raise HTTPException(status_code=429, detail="Çok fazla deneme. 15 dakika sonra tekrar deneyin.")
-    user = await db.users.find_one({"email": email})
-    if not user or not A.verify_password(body.password, user["password_hash"]):
-        await db.login_attempts.update_one(
-            {"identifier": ident},
-            {"$inc": {"count": 1},
-             "$set": {"locked_until": (datetime.now(timezone.utc) + timedelta(minutes=15)).isoformat()}},
-            upsert=True,
-        )
+
+    user_res = await db.execute(select(M.User).where(M.User.email == email))
+    user_obj = user_res.scalars().first()
+
+    if not user_obj or not A.verify_password(body.password, user_obj.password_hash):
+        if attempt:
+            attempt.count += 1
+            attempt.locked_until = (datetime.now(timezone.utc) + timedelta(minutes=15)).isoformat()
+        else:
+            db.add(M.LoginAttempt(
+                id=str(uuid.uuid4()),
+                identifier=ident,
+                count=1,
+                locked_until=(datetime.now(timezone.utc) + timedelta(minutes=15)).isoformat(),
+                created_at=now_iso(),
+            ))
+        await db.commit()
         raise HTTPException(status_code=401, detail="E-posta veya şifre hatalı")
-    await db.login_attempts.delete_one({"identifier": ident})
-    uid = str(user["_id"])
-    access = A.create_access_token(uid, email)
-    refresh = A.create_refresh_token(uid)
+
+    if attempt:
+        await db.delete(attempt)
+        await db.commit()
+
+    access = A.create_access_token(user_obj.id, email)
+    refresh = A.create_refresh_token(user_obj.id)
     A.set_auth_cookies(response, access, refresh)
-    return {"user": A.public_user(user), "token": access}
+    return {"user": user_obj.to_dict(), "token": access}
 
 
 @api.post("/auth/logout")
@@ -209,567 +228,865 @@ async def me(user: dict = Depends(current_user)):
 
 
 @api.post("/auth/forgot-password")
-async def forgot(body: ForgotIn):
-    user = await db.users.find_one({"email": body.email.lower()})
-    if user:
+async def forgot_password(body: ForgotIn, db: AsyncSession = Depends(get_db)):
+    email = body.email.lower()
+    user_res = await db.execute(select(M.User).where(M.User.email == email))
+    user_obj = user_res.scalars().first()
+    if user_obj:
         token = secrets.token_urlsafe(32)
-        await db.password_reset_tokens.insert_one({
-            "token": token, "user_id": str(user["_id"]),
-            "expires_at": (datetime.now(timezone.utc) + timedelta(hours=1)),
-            "used": False,
-        })
-        logger.info(f"Şifre sıfırlama linki: {os.environ.get('FRONTEND_URL')}/reset-password?token={token}")
-    return {"ok": True, "message": "Kayıtlıysa sıfırlama bağlantısı gönderildi"}
+        db.add(M.PasswordResetToken(
+            id=str(uuid.uuid4()),
+            email=email,
+            token=token,
+            expires_at=(datetime.now(timezone.utc) + timedelta(hours=2)).isoformat(),
+            created_at=now_iso(),
+        ))
+        await db.commit()
+        logger.info(f"Şifre sıfırlama linki: {os.environ.get('FRONTEND_URL', 'http://localhost:3000')}/reset-password?token={token}")
+    return {"ok": True, "message": "Şifre sıfırlama bağlantısı gönderildi."}
 
 
 @api.post("/auth/reset-password")
-async def reset(body: ResetIn):
-    rec = await db.password_reset_tokens.find_one({"token": body.token})
-    if not rec or rec.get("used"):
-        raise HTTPException(status_code=400, detail="Geçersiz veya kullanılmış bağlantı")
-    from bson import ObjectId
-    await db.users.update_one({"_id": ObjectId(rec["user_id"])},
-                              {"$set": {"password_hash": A.hash_password(body.password)}})
-    await db.password_reset_tokens.update_one({"token": body.token}, {"$set": {"used": True}})
-    return {"ok": True}
+async def reset_password(body: ResetIn, db: AsyncSession = Depends(get_db)):
+    tok_res = await db.execute(select(M.PasswordResetToken).where(M.PasswordResetToken.token == body.token))
+    tok_obj = tok_res.scalars().first()
+    if not tok_obj:
+        raise HTTPException(status_code=400, detail="Geçersiz veya süresi dolmuş bağlantı")
+    if datetime.fromisoformat(tok_obj.expires_at) < datetime.now(timezone.utc):
+        raise HTTPException(status_code=400, detail="Bağlantı süresi dolmuş")
+
+    user_res = await db.execute(select(M.User).where(M.User.email == tok_obj.email))
+    user_obj = user_res.scalars().first()
+    if user_obj:
+        user_obj.password_hash = A.hash_password(body.password)
+        user_obj.updated_at = now_iso()
+    await db.delete(tok_obj)
+    await db.commit()
+    return {"ok": True, "message": "Şifreniz başarıyla güncellendi."}
 
 
+# ============ PROFILE ============
 @api.put("/profile")
-async def update_profile(body: ProfileIn, user: dict = Depends(current_user)):
-    updates = {k: v for k, v in body.model_dump().items() if v is not None}
-    if updates:
-        await db.users.update_one({"_id": user["_id"]}, {"$set": updates})
-    fresh = await db.users.find_one({"_id": user["_id"]})
-    return {"user": A.public_user(fresh)}
+async def update_profile(body: ProfileIn, user: dict = Depends(current_user), db: AsyncSession = Depends(get_db)):
+    uid = user["id"]
+    user_res = await db.execute(select(M.User).where(M.User.id == uid))
+    user_obj = user_res.scalars().first()
+    if not user_obj:
+        raise HTTPException(status_code=404, detail="Kullanıcı bulunamadı")
+
+    data = body.model_dump(exclude_unset=True)
+    if not data:
+        return {"user": user_obj.to_dict()}
+
+    for k, v in data.items():
+        setattr(user_obj, k, v)
+    user_obj.updated_at = now_iso()
+    await db.commit()
+    return {"user": user_obj.to_dict()}
 
 
-# ============ EXAMS ============
+# ============ EXAMS / HIERARCHY ============
 @api.get("/exams")
-async def list_exams():
-    exams = await db.exams.find({"status": "active"}, {"_id": 0}).sort("order", 1).to_list(200)
-    return exams
+async def list_exams(db: AsyncSession = Depends(get_db)):
+    res = await db.execute(select(M.Exam).where(M.Exam.status == "active").order_by(M.Exam.order))
+    exams = res.scalars().all()
+    return [e.to_dict() for e in exams]
 
 
-@api.post("/admin/exams")
-async def create_exam(body: ExamIn, admin: dict = Depends(admin_user)):
-    count = await db.exams.count_documents({})
-    doc = {"id": str(uuid.uuid4()), **body.model_dump(), "order": count, "created_at": now_iso()}
-    await db.exams.insert_one(doc)
-    doc.pop("_id", None)
-    return doc
+@api.get("/exams/{exam_id}")
+async def get_exam(exam_id: str, db: AsyncSession = Depends(get_db)):
+    res = await db.execute(select(M.Exam).where(M.Exam.id == exam_id))
+    exam = res.scalars().first()
+    if not exam:
+        raise HTTPException(status_code=404, detail="Sınav bulunamadı")
+    return exam.to_dict()
 
 
-@api.put("/admin/exams/{exam_id}")
-async def update_exam(exam_id: str, body: ExamIn, admin: dict = Depends(admin_user)):
-    await db.exams.update_one({"id": exam_id}, {"$set": body.model_dump()})
-    return await db.exams.find_one({"id": exam_id}, {"_id": 0})
-
-
-@api.delete("/admin/exams/{exam_id}")
-async def delete_exam(exam_id: str, admin: dict = Depends(admin_user)):
-    await db.exams.delete_one({"id": exam_id})
-    return {"ok": True}
-
-
-# ============ SUBJECTS / TOPICS ============
 @api.get("/exams/{exam_id}/subjects")
-async def exam_subjects(exam_id: str):
-    subs = await db.subjects.find({"exam_id": exam_id, "status": "active"}, {"_id": 0}).sort("order", 1).to_list(200)
-    return subs
+async def get_exam_subjects(exam_id: str, db: AsyncSession = Depends(get_db)):
+    res = await db.execute(
+        select(M.Subject)
+        .where(and_(M.Subject.exam_id == exam_id, M.Subject.status == "active"))
+        .order_by(M.Subject.order)
+    )
+    subjects = res.scalars().all()
+    return [s.to_dict() for s in subjects]
 
 
-@api.get("/exams/{exam_id}/topics")
-async def exam_topics(exam_id: str, subject_id: Optional[str] = None):
-    q = {"exam_id": exam_id, "status": "active"}
-    if subject_id:
-        q["subject_id"] = subject_id
-    topics = await db.topics.find(q, {"_id": 0}).sort("order", 1).to_list(500)
-    return topics
+@api.get("/subjects/{subject_id}/topics")
+async def get_subject_topics(subject_id: str, db: AsyncSession = Depends(get_db)):
+    res = await db.execute(
+        select(M.Topic)
+        .where(and_(M.Topic.subject_id == subject_id, M.Topic.status == "active"))
+        .order_by(M.Topic.order)
+    )
+    topics = res.scalars().all()
+    return [t.to_dict() for t in topics]
 
 
-@api.post("/admin/subjects")
-async def create_subject(body: SubjectIn, admin: dict = Depends(admin_user)):
-    doc = {"id": str(uuid.uuid4()), **body.model_dump(), "status": "active", "created_at": now_iso()}
-    await db.subjects.insert_one(doc)
-    doc.pop("_id", None)
-    return doc
-
-
-@api.post("/admin/topics")
-async def create_topic(body: TopicIn, admin: dict = Depends(admin_user)):
-    doc = {"id": str(uuid.uuid4()), **body.model_dump(), "status": "active", "created_at": now_iso()}
-    await db.topics.insert_one(doc)
-    doc.pop("_id", None)
-    return doc
-
-
-# ============ QUESTIONS (question bank) ============
-def strip_question(q, reveal=False):
-    base = {k: q[k] for k in ["id", "exam_id", "subject_id", "topic_id", "question_text",
-                              "option_a", "option_b", "option_c", "option_d", "option_e",
-                              "difficulty", "source", "year", "tags"] if k in q}
-    if reveal:
-        base["correct_answer"] = q.get("correct_answer")
-        base["explanation"] = q.get("explanation")
-    return base
-
-
+# ============ QUESTIONS ============
 @api.get("/questions")
 async def list_questions(
-    user: dict = Depends(current_user),
     exam_id: Optional[str] = None,
     subject_id: Optional[str] = None,
     topic_id: Optional[str] = None,
     difficulty: Optional[str] = None,
-    status_filter: Optional[str] = Query(None, alias="status"),  # solved/unsolved
-    result_filter: Optional[str] = None,  # correct/wrong/blank
-    page: int = 1,
-    page_size: int = 12,
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
+    db: AsyncSession = Depends(get_db),
 ):
-    q = {"status": "active"}
+    stmt = select(M.Question).where(M.Question.status == "active")
     if exam_id:
-        q["exam_id"] = exam_id
+        stmt = stmt.where(M.Question.exam_id == exam_id)
     if subject_id:
-        q["subject_id"] = subject_id
+        stmt = stmt.where(M.Question.subject_id == subject_id)
     if topic_id:
-        q["topic_id"] = topic_id
+        stmt = stmt.where(M.Question.topic_id == topic_id)
     if difficulty:
-        q["difficulty"] = difficulty
+        stmt = stmt.where(M.Question.difficulty == difficulty)
 
-    uid = str(user["_id"])
-    # user answer history for filtering by status/result
-    if status_filter or result_filter:
-        ans = await db.user_answers.find({"user_id": uid}, {"question_id": 1, "is_correct": 1, "is_blank": 1, "_id": 0}).to_list(100000)
-        answered_ids = {a["question_id"] for a in ans}
-        latest = {}
-        for a in ans:
-            latest[a["question_id"]] = a
-        if status_filter == "solved":
-            q["id"] = {"$in": list(answered_ids)}
-        elif status_filter == "unsolved":
-            q["id"] = {"$nin": list(answered_ids)}
-        if result_filter == "wrong":
-            ids = [k for k, v in latest.items() if not v["is_correct"] and not v["is_blank"]]
-            q["id"] = {"$in": ids}
-        elif result_filter == "correct":
-            ids = [k for k, v in latest.items() if v["is_correct"]]
-            q["id"] = {"$in": ids}
-        elif result_filter == "blank":
-            ids = [k for k, v in latest.items() if v["is_blank"]]
-            q["id"] = {"$in": ids}
+    count_stmt = select(func.count()).select_from(stmt.subquery())
+    total = (await db.execute(count_stmt)).scalar() or 0
 
-    total = await db.questions.count_documents(q)
-    page = max(1, page)
-    cursor = db.questions.find(q).skip((page - 1) * page_size).limit(page_size)
-    items = [strip_question(doc) for doc in await cursor.to_list(page_size)]
+    items_stmt = stmt.order_by(desc(M.Question.created_at)).offset((page - 1) * page_size).limit(page_size)
+    res = await db.execute(items_stmt)
+    items = res.scalars().all()
+
     return {
-        "items": items, "total": total, "page": page, "page_size": page_size,
-        "pages": max(1, (total + page_size - 1) // page_size),
+        "total": total,
+        "page": page,
+        "page_size": page_size,
+        "items": [q.to_dict() for q in items],
     }
 
 
-@api.post("/practice/answer")
-async def practice_answer(body: PracticeAnswerIn, user: dict = Depends(current_user)):
-    q = await db.questions.find_one({"id": body.question_id})
+@api.get("/questions/{question_id}")
+async def get_question(question_id: str, db: AsyncSession = Depends(get_db)):
+    res = await db.execute(select(M.Question).where(M.Question.id == question_id))
+    q = res.scalars().first()
     if not q:
         raise HTTPException(status_code=404, detail="Soru bulunamadı")
-    is_blank = body.selected_answer is None
-    is_correct = (not is_blank) and body.selected_answer == q["correct_answer"]
-    await db.user_answers.insert_one({
-        "id": str(uuid.uuid4()), "user_id": str(user["_id"]), "question_id": q["id"],
-        "exam_id": q["exam_id"], "subject_id": q["subject_id"], "topic_id": q["topic_id"],
-        "selected_answer": body.selected_answer, "correct_answer": q["correct_answer"],
-        "is_correct": is_correct, "is_blank": is_blank, "time_spent": body.time_spent,
-        "exam_session_id": None, "created_at": now_iso(),
-    })
-    if is_correct:
-        await db.users.update_one({"_id": user["_id"]}, {"$inc": {"xp": 10}})
-    return {"is_correct": is_correct, "correct_answer": q["correct_answer"],
-            "explanation": q.get("explanation", "")}
+    return q.to_dict()
 
 
-@api.post("/admin/questions")
-async def create_question(body: QuestionIn, admin: dict = Depends(admin_user)):
-    doc = {"id": str(uuid.uuid4()), **body.model_dump(), "question_type": "multiple_choice",
-           "status": "active", "created_at": now_iso(), "updated_at": now_iso()}
-    await db.questions.insert_one(doc)
-    doc.pop("_id", None)
-    return doc
+@api.post("/questions/{question_id}/answer")
+async def answer_question(
+    question_id: str,
+    body: PracticeAnswerIn,
+    user: dict = Depends(current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    res = await db.execute(select(M.Question).where(M.Question.id == question_id))
+    q = res.scalars().first()
+    if not q:
+        raise HTTPException(status_code=404, detail="Soru bulunamadı")
 
+    selected = body.selected_answer
+    is_blank = selected is None or selected == ""
+    is_correct = (not is_blank) and (selected.upper() == q.correct_answer.upper())
 
-@api.post("/admin/questions/bulk")
-async def bulk_questions(items: List[QuestionIn], admin: dict = Depends(admin_user)):
-    docs = []
-    for body in items:
-        docs.append({"id": str(uuid.uuid4()), **body.model_dump(), "question_type": "multiple_choice",
-                     "status": "active", "created_at": now_iso(), "updated_at": now_iso()})
-    if docs:
-        await db.questions.insert_many(docs)
-    return {"inserted": len(docs)}
+    ans = M.UserAnswer(
+        id=str(uuid.uuid4()),
+        user_id=user["id"],
+        question_id=q.id,
+        exam_id=q.exam_id,
+        subject_id=q.subject_id,
+        topic_id=q.topic_id,
+        selected_answer=selected,
+        correct_answer=q.correct_answer,
+        is_correct=is_correct,
+        is_blank=is_blank,
+        time_spent=body.time_spent,
+        exam_session_id=None,
+        created_at=now_iso(),
+    )
+    db.add(ans)
+
+    # Award XP for practice answers
+    u_res = await db.execute(select(M.User).where(M.User.id == user["id"]))
+    user_obj = u_res.scalars().first()
+    if user_obj:
+        user_obj.xp = (user_obj.xp or 0) + (10 if is_correct else 2)
+    await db.commit()
+
+    return {
+        "is_correct": is_correct,
+        "correct_answer": q.correct_answer,
+        "explanation": q.explanation or "",
+    }
 
 
 # ============ TESTS / DENEMELER ============
 @api.get("/tests")
-async def list_tests(exam_id: Optional[str] = None):
-    q = {"status": "published"}
+async def list_tests(exam_id: Optional[str] = None, db: AsyncSession = Depends(get_db)):
+    stmt = select(M.Test).where(M.Test.status == "published")
     if exam_id:
-        q["exam_id"] = exam_id
-    tests = await db.tests.find(q, {"_id": 0}).to_list(200)
-    for t in tests:
-        t["question_count"] = len(t.get("question_ids", []))
-    return tests
+        stmt = stmt.where(M.Test.exam_id == exam_id)
+    res = await db.execute(stmt.order_by(desc(M.Test.created_at)))
+    tests = res.scalars().all()
+    return [t.to_dict() for t in tests]
 
 
 @api.get("/tests/{test_id}")
-async def get_test(test_id: str, user: dict = Depends(current_user)):
-    t = await db.tests.find_one({"id": test_id}, {"_id": 0})
-    if not t:
+async def get_test(test_id: str, db: AsyncSession = Depends(get_db)):
+    res = await db.execute(select(M.Test).where(M.Test.id == test_id))
+    test = res.scalars().first()
+    if not test:
         raise HTTPException(status_code=404, detail="Deneme bulunamadı")
-    qs = await db.questions.find({"id": {"$in": t["question_ids"]}}).to_list(1000)
-    order = {qid: i for i, qid in enumerate(t["question_ids"])}
-    qs.sort(key=lambda x: order.get(x["id"], 0))
-    t["questions"] = [strip_question(q) for q in qs]
-    return t
+
+    test_dict = test.to_dict()
+    q_ids = test_dict.get("question_ids") or []
+    if q_ids:
+        q_res = await db.execute(select(M.Question).where(M.Question.id.in_(q_ids)))
+        loaded_qs = {q.id: q.to_dict() for q in q_res.scalars().all()}
+        test_dict["questions"] = [loaded_qs[qid] for qid in q_ids if qid in loaded_qs]
+    else:
+        test_dict["questions"] = []
+
+    return test_dict
 
 
 @api.post("/tests/{test_id}/start")
-async def start_test(test_id: str, user: dict = Depends(current_user)):
-    t = await db.tests.find_one({"id": test_id})
-    if not t:
+async def start_test(test_id: str, user: dict = Depends(current_user), db: AsyncSession = Depends(get_db)):
+    res = await db.execute(select(M.Test).where(M.Test.id == test_id))
+    test = res.scalars().first()
+    if not test:
         raise HTTPException(status_code=404, detail="Deneme bulunamadı")
-    session = {
-        "id": str(uuid.uuid4()), "user_id": str(user["_id"]), "test_id": test_id,
-        "exam_id": t["exam_id"], "started_at": now_iso(), "status": "in_progress",
-    }
-    await db.test_sessions.insert_one(session)
-    session.pop("_id", None)
-    return session
+
+    session = M.TestSession(
+        id=str(uuid.uuid4()),
+        test_id=test_id,
+        user_id=user["id"],
+        status="in_progress",
+        start_time=now_iso(),
+        end_time=None,
+        answers={},
+        marked={},
+        created_at=now_iso(),
+    )
+    db.add(session)
+    await db.commit()
+    return session.to_dict()
 
 
-@api.post("/sessions/{session_id}/submit")
-async def submit_session(session_id: str, body: SubmitIn, user: dict = Depends(current_user)):
-    session = await db.test_sessions.find_one({"id": session_id})
-    if not session or session["user_id"] != str(user["_id"]):
-        raise HTTPException(status_code=404, detail="Oturum bulunamadı")
-    test = await db.tests.find_one({"id": session["test_id"]})
-    qmap = {q["id"]: q for q in await db.questions.find(
-        {"id": {"$in": test["question_ids"]}}).to_list(1000)}
+@api.post("/tests/{test_id}/submit")
+async def submit_test(
+    test_id: str,
+    body: SubmitIn,
+    user: dict = Depends(current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    res = await db.execute(select(M.Test).where(M.Test.id == test_id))
+    test = res.scalars().first()
+    if not test:
+        raise HTTPException(status_code=404, detail="Deneme bulunamadı")
 
-    correct = wrong = blank = 0
-    answer_docs = []
-    for a in body.answers:
-        q = qmap.get(a.question_id)
+    exam_res = await db.execute(select(M.Exam).where(M.Exam.id == test.exam_id))
+    exam = exam_res.scalars().first()
+
+    q_ids = [a.question_id for a in body.answers]
+    q_res = await db.execute(select(M.Question).where(M.Question.id.in_(q_ids)))
+    questions = {q.id: q for q in q_res.scalars().all()}
+
+    subjects_res = await db.execute(select(M.Subject).where(M.Subject.exam_id == test.exam_id))
+    subjects = {s.id: s.name for s in subjects_res.scalars().all()}
+
+    correct = 0
+    wrong = 0
+    blank = 0
+    section_map: Dict[str, Dict[str, Any]] = {}
+
+    session_id = str(uuid.uuid4())
+    now_str = now_iso()
+
+    for item in body.answers:
+        q = questions.get(item.question_id)
         if not q:
             continue
-        is_blank = a.selected_answer is None
-        is_correct = (not is_blank) and a.selected_answer == q["correct_answer"]
+
+        selected = item.selected_answer
+        is_blank = selected is None or selected == ""
+        is_correct = (not is_blank) and (selected.upper() == q.correct_answer.upper())
+
         if is_correct:
             correct += 1
         elif is_blank:
             blank += 1
         else:
             wrong += 1
-        answer_docs.append({
-            "id": str(uuid.uuid4()), "user_id": str(user["_id"]), "question_id": q["id"],
-            "exam_id": q["exam_id"], "subject_id": q["subject_id"], "topic_id": q["topic_id"],
-            "selected_answer": a.selected_answer, "correct_answer": q["correct_answer"],
-            "is_correct": is_correct, "is_blank": is_blank, "time_spent": a.time_spent,
-            "exam_session_id": session_id, "created_at": now_iso(),
-        })
-    if answer_docs:
-        await db.user_answers.insert_many(answer_docs)
 
-    total = len(test["question_ids"])
-    net = round(correct - wrong / 4, 2)
-    score = round((net / total) * 500, 1) if total else 0
-    success_rate = round((correct / (correct + wrong)) * 100, 1) if (correct + wrong) else 0
-
-    result = {
-        "id": str(uuid.uuid4()), "user_id": str(user["_id"]), "session_id": session_id,
-        "test_id": test["id"], "test_name": test["name"], "exam_id": test["exam_id"],
-        "total": total, "correct": correct, "wrong": wrong, "blank": blank,
-        "net": net, "score": score, "success_rate": success_rate,
-        "created_at": now_iso(),
-    }
-    await db.user_test_results.insert_one(dict(result))
-    await db.test_sessions.update_one({"id": session_id},
-                                      {"$set": {"status": "completed", "completed_at": now_iso()}})
-    await db.users.update_one({"_id": user["_id"]},
-                              {"$inc": {"xp": correct * 10}})
-    result.pop("_id", None)
-    return result
-
-
-@api.get("/results")
-async def list_results(user: dict = Depends(current_user)):
-    rows = await db.user_test_results.find(
-        {"user_id": str(user["_id"])}, {"_id": 0}).sort("created_at", -1).to_list(100)
-    return rows
-
-
-# ============ ANALYTICS ============
-async def topic_proficiency(uid, exam_id=None):
-    match = {"user_id": uid}
-    if exam_id:
-        match["exam_id"] = exam_id
-    answers = await db.user_answers.find(match, {"_id": 0}).to_list(100000)
-    by_topic = {}
-    for a in answers:
-        t = a["topic_id"]
-        d = by_topic.setdefault(t, {"correct": 0, "wrong": 0, "blank": 0, "time": 0, "n": 0})
-        d["n"] += 1
-        d["time"] += a.get("time_spent", 0)
-        if a["is_correct"]:
-            d["correct"] += 1
-        elif a["is_blank"]:
-            d["blank"] += 1
+        sec_name = subjects.get(q.subject_id, "Genel")
+        if sec_name not in section_map:
+            section_map[sec_name] = {"correct": 0, "wrong": 0, "blank": 0, "total": 0}
+        section_map[sec_name]["total"] += 1
+        if is_correct:
+            section_map[sec_name]["correct"] += 1
+        elif is_blank:
+            section_map[sec_name]["blank"] += 1
         else:
-            d["wrong"] += 1
-    # enrich with topic + subject names
-    topic_ids = list(by_topic.keys())
-    topics = await db.topics.find({"id": {"$in": topic_ids}}, {"_id": 0}).to_list(1000)
-    tmap = {t["id"]: t for t in topics}
-    subjects = await db.subjects.find({}, {"_id": 0}).to_list(1000)
-    smap = {s["id"]: s for s in subjects}
-    out = []
-    for tid, d in by_topic.items():
-        answered = d["correct"] + d["wrong"]
-        acc = (d["correct"] / answered * 100) if answered else 0
-        proficiency = round(acc)
-        if proficiency >= 70:
-            status = "İyi"
-        elif proficiency >= 45:
-            status = "Geliştirilmeli"
-        else:
-            status = "Kritik Eksik"
-        topic = tmap.get(tid, {})
-        subj = smap.get(topic.get("subject_id"), {})
-        out.append({
-            "topic_id": tid, "topic_name": topic.get("name", "Bilinmeyen"),
-            "subject_id": topic.get("subject_id"), "subject_name": subj.get("name", ""),
-            "subject_slug": subj.get("slug", "general"), "exam_id": topic.get("exam_id"),
-            "proficiency": proficiency, "status": status,
-            "solved": d["n"], "correct": d["correct"], "wrong": d["wrong"],
-            "blank": d["blank"], "avg_time": round(d["time"] / d["n"], 1) if d["n"] else 0,
-        })
-    out.sort(key=lambda x: x["proficiency"])
-    return out
+            section_map[sec_name]["wrong"] += 1
+
+        # Record individual user answer
+        db.add(M.UserAnswer(
+            id=str(uuid.uuid4()),
+            user_id=user["id"],
+            question_id=q.id,
+            exam_id=q.exam_id,
+            subject_id=q.subject_id,
+            topic_id=q.topic_id,
+            selected_answer=selected,
+            correct_answer=q.correct_answer,
+            is_correct=is_correct,
+            is_blank=is_blank,
+            time_spent=item.time_spent,
+            exam_session_id=session_id,
+            created_at=now_str,
+        ))
+
+    total = correct + wrong + blank
+    net = round(correct - (wrong * 0.25), 2)
+    score = round(max(100.0, 100.0 + (net * 4.0)), 1)
+
+    result_doc = M.UserTestResult(
+        id=str(uuid.uuid4()),
+        user_id=user["id"],
+        session_id=session_id,
+        test_id=test.id,
+        test_name=test.name,
+        exam_id=test.exam_id,
+        total=total,
+        correct=correct,
+        wrong=wrong,
+        blank=blank,
+        net=net,
+        score=score,
+        success_rate=round((correct / max(1, correct + wrong)) * 100, 1),
+        section_breakdown=section_map,
+        created_at=now_str,
+    )
+    db.add(result_doc)
+
+    # Award XP
+    u_res = await db.execute(select(M.User).where(M.User.id == user["id"]))
+    user_obj = u_res.scalars().first()
+    if user_obj:
+        user_obj.xp = (user_obj.xp or 0) + (correct * 15) + 50
+    await db.commit()
+
+    return result_doc.to_dict()
 
 
-@api.get("/topics/proficiency")
-async def get_proficiency(user: dict = Depends(current_user), exam_id: Optional[str] = None):
-    return await topic_proficiency(str(user["_id"]), exam_id)
+# ============ USER DASHBOARD & STATS ============
+@api.get("/user/dashboard")
+async def user_dashboard(user: dict = Depends(current_user), db: AsyncSession = Depends(get_db)):
+    uid = user["id"]
+    now = datetime.now(timezone.utc)
+    today_start = datetime(now.year, now.month, now.day, tzinfo=timezone.utc).isoformat()
 
+    # Answers today
+    today_ans_stmt = select(func.count()).select_from(M.UserAnswer).where(
+        and_(M.UserAnswer.user_id == uid, M.UserAnswer.created_at >= today_start)
+    )
+    today_solved = (await db.execute(today_ans_stmt)).scalar() or 0
 
-@api.get("/dashboard")
-async def dashboard(user: dict = Depends(current_user)):
-    uid = str(user["_id"])
-    all_answers = await db.user_answers.find({"user_id": uid}, {"_id": 0}).to_list(100000)
-    today = datetime.now(timezone.utc).date()
+    # Total answers
+    all_ans_res = await db.execute(
+        select(M.UserAnswer.is_correct, M.UserAnswer.topic_id, M.UserAnswer.created_at)
+        .where(M.UserAnswer.user_id == uid)
+    )
+    all_answers = all_ans_res.all()
 
-    def parse(a):
-        try:
-            return datetime.fromisoformat(a["created_at"]).date()
-        except Exception:
-            return today
+    total_answers = len(all_answers)
+    correct_answers = sum(1 for a in all_answers if a.is_correct)
+    overall_success = round((correct_answers / max(1, total_answers)) * 100, 1)
 
-    today_ans = [a for a in all_answers if parse(a) == today]
-    solved_today = len(today_ans)
-    correct_today = sum(1 for a in today_ans if a["is_correct"])
-    answered_today = sum(1 for a in today_ans if not a["is_blank"])
-    success_today = round(correct_today / answered_today * 100, 1) if answered_today else 0
-
-    total_correct = sum(1 for a in all_answers if a["is_correct"])
-    total_answered = sum(1 for a in all_answers if not a["is_blank"])
-    overall_success = round(total_correct / total_answered * 100, 1) if total_answered else 0
-
-    # last 7 days series
-    series = []
+    # 7-day activity
+    daily_stats = []
     for i in range(6, -1, -1):
-        day = today - timedelta(days=i)
-        day_ans = [a for a in all_answers if parse(a) == day]
-        ans_nb = sum(1 for a in day_ans if not a["is_blank"])
-        cor = sum(1 for a in day_ans if a["is_correct"])
-        series.append({
-            "date": day.strftime("%d.%m"),
-            "solved": len(day_ans),
-            "success": round(cor / ans_nb * 100, 1) if ans_nb else 0,
+        day_date = (now - timedelta(days=i)).date()
+        day_str = day_date.strftime("%Y-%m-%d")
+        count = sum(1 for a in all_answers if a.created_at.startswith(day_str))
+        daily_stats.append({
+            "day": day_date.strftime("%a"),
+            "date": day_str,
+            "count": count,
         })
 
-    results = await db.user_test_results.find({"user_id": uid}, {"_id": 0}).sort("created_at", -1).to_list(100)
-    last_result = results[0] if results else None
-    avg_score = round(sum(r["score"] for r in results) / len(results), 1) if results else 0
-
-    prof = await topic_proficiency(uid)
-    weak = [p for p in prof if p["proficiency"] < 60][:5]
-    strong = sorted([p for p in prof if p["proficiency"] >= 70],
-                    key=lambda x: -x["proficiency"])[:5]
-
-    # recommended tests from target exam
-    target = user.get("target_exams") or []
-    tq = {"status": "published"}
-    if target:
-        tq["exam_id"] = {"$in": target}
-    rec_tests = await db.tests.find(tq, {"_id": 0}).limit(3).to_list(3)
-    for t in rec_tests:
-        t["question_count"] = len(t.get("question_ids", []))
+    # Recent test results
+    results_res = await db.execute(
+        select(M.UserTestResult)
+        .where(M.UserTestResult.user_id == uid)
+        .order_by(desc(M.UserTestResult.created_at))
+        .limit(5)
+    )
+    recent_results = [r.to_dict() for r in results_res.scalars().all()]
 
     return {
+        "today_solved": today_solved,
         "daily_goal": user.get("daily_goal", 20),
-        "solved_today": solved_today,
-        "success_today": success_today,
+        "total_solved": total_answers,
         "overall_success": overall_success,
-        "total_solved": len(all_answers),
-        "total_tests": len(results),
-        "avg_score": avg_score,
-        "last_result": last_result,
-        "series": series,
-        "weak_topics": weak,
-        "strong_topics": strong,
-        "recommended_tests": rec_tests,
         "xp": user.get("xp", 0),
         "streak": user.get("streak", 0),
+        "daily_stats": daily_stats,
+        "recent_results": recent_results,
     }
 
 
-@api.get("/leaderboard")
-async def leaderboard(period: str = "all", exam_id: Optional[str] = None, metric: str = "score"):
-    now = datetime.now(timezone.utc)
-    start = None
-    if period == "daily":
-        start = now - timedelta(days=1)
-    elif period == "weekly":
-        start = now - timedelta(days=7)
-    elif period == "monthly":
-        start = now - timedelta(days=30)
+@api.get("/user/weak-topics")
+async def weak_topics(user: dict = Depends(current_user), db: AsyncSession = Depends(get_db)):
+    uid = user["id"]
+    ans_res = await db.execute(
+        select(M.UserAnswer.topic_id, M.UserAnswer.is_correct)
+        .where(M.UserAnswer.user_id == uid)
+    )
+    answers = ans_res.all()
+    if not answers:
+        return {"critical": [], "improvement": [], "good": []}
 
-    match = {}
-    if exam_id:
-        match["exam_id"] = exam_id
-    results = await db.user_test_results.find(match, {"_id": 0}).to_list(100000)
-    if start:
-        results = [r for r in results if _after(r["created_at"], start)]
+    topic_stats: Dict[str, Dict[str, int]] = {}
+    for a in answers:
+        if a.topic_id not in topic_stats:
+            topic_stats[a.topic_id] = {"total": 0, "correct": 0}
+        topic_stats[a.topic_id]["total"] += 1
+        if a.is_correct:
+            topic_stats[a.topic_id]["correct"] += 1
 
-    agg = {}
-    for r in results:
-        d = agg.setdefault(r["user_id"], {"score": 0, "tests": 0, "correct": 0, "best": 0})
-        d["score"] += r["score"]
-        d["best"] = max(d["best"], r["score"])
-        d["tests"] += 1
-        d["correct"] += r["correct"]
+    t_ids = list(topic_stats.keys())
+    t_res = await db.execute(select(M.Topic).where(M.Topic.id.in_(t_ids)))
+    topics = {t.id: t for t in t_res.scalars().all()}
 
-    from bson import ObjectId
-    rows = []
-    for uid, d in agg.items():
-        try:
-            u = await db.users.find_one({"_id": ObjectId(uid)})
-        except Exception:
-            u = None
-        if not u:
-            continue
-        avg = round(d["score"] / d["tests"], 1) if d["tests"] else 0
-        rows.append({
-            "user_id": uid, "name": u.get("name", "Öğrenci"),
-            "username": u.get("username", ""), "avatar": u.get("avatar", ""),
-            "avg_score": avg, "best_score": d["best"], "tests": d["tests"],
-            "total_correct": d["correct"], "xp": u.get("xp", 0),
-        })
-    key = {"score": "avg_score", "questions": "total_correct", "xp": "xp"}.get(metric, "avg_score")
-    rows.sort(key=lambda x: -x[key])
-    for i, r in enumerate(rows):
-        r["rank"] = i + 1
-    return rows[:50]
+    critical, improvement, good = [], [], []
+    for tid, st in topic_stats.items():
+        t = topics.get(tid)
+        tname = t.name if t else "Bilinmeyen Konu"
+        rate = round((st["correct"] / st["total"]) * 100, 1)
+        item = {
+            "topic_id": tid,
+            "topic_name": tname,
+            "total": st["total"],
+            "correct": st["correct"],
+            "success_rate": rate,
+        }
+        if rate < 50:
+            critical.append(item)
+        elif rate < 75:
+            improvement.append(item)
+        else:
+            good.append(item)
 
-
-def _after(iso_str, dt):
-    try:
-        return datetime.fromisoformat(iso_str) >= dt
-    except Exception:
-        return True
+    return {
+        "critical": sorted(critical, key=lambda x: x["success_rate"]),
+        "improvement": sorted(improvement, key=lambda x: x["success_rate"]),
+        "good": sorted(good, key=lambda x: -x["success_rate"]),
+    }
 
 
 # ============ STUDY NOTES ============
-class NoteIn(BaseModel):
-    title: str
-    description: str = ""
-    exam_id: str
-    subject_id: Optional[str] = None
-    topic_id: Optional[str] = None
-    content: str = ""
-    video_url: str = ""
-    file_path: Optional[str] = None
-    file_name: Optional[str] = None
-    status: str = "published"
-
-
-@api.get("/notes")
-async def list_notes(user: dict = Depends(current_user), exam_id: Optional[str] = None,
-                     subject_id: Optional[str] = None, topic_id: Optional[str] = None):
-    q = {"status": "published"}
+@api.get("/study-notes")
+async def list_study_notes(
+    exam_id: Optional[str] = None,
+    subject_id: Optional[str] = None,
+    topic_id: Optional[str] = None,
+    db: AsyncSession = Depends(get_db),
+):
+    stmt = select(M.StudyNote).where(M.StudyNote.status == "published")
     if exam_id:
-        q["exam_id"] = exam_id
+        stmt = stmt.where(M.StudyNote.exam_id == exam_id)
     if subject_id:
-        q["subject_id"] = subject_id
+        stmt = stmt.where(M.StudyNote.subject_id == subject_id)
     if topic_id:
-        q["topic_id"] = topic_id
-    notes = await db.study_notes.find(q, {"_id": 0}).sort("created_at", -1).to_list(300)
-    return notes
+        stmt = stmt.where(M.StudyNote.topic_id == topic_id)
+    res = await db.execute(stmt.order_by(desc(M.StudyNote.created_at)))
+    notes = res.scalars().all()
+    return [n.to_dict() for n in notes]
 
 
-@api.get("/notes/{note_id}")
-async def get_note(note_id: str, user: dict = Depends(current_user)):
-    n = await db.study_notes.find_one({"id": note_id}, {"_id": 0})
-    if not n:
+@api.get("/study-notes/{note_id}")
+async def get_study_note(note_id: str, db: AsyncSession = Depends(get_db)):
+    res = await db.execute(select(M.StudyNote).where(M.StudyNote.id == note_id))
+    note = res.scalars().first()
+    if not note:
         raise HTTPException(status_code=404, detail="Ders notu bulunamadı")
-    return n
+    return note.to_dict()
 
 
-@api.get("/topics/{topic_id}/note")
-async def topic_note(topic_id: str, user: dict = Depends(current_user)):
-    n = await db.study_notes.find_one({"topic_id": topic_id, "status": "published"}, {"_id": 0})
-    return n or {}
+# ============ SCORE CALCULATOR ============
+class ScoreCalcSectionIn(BaseModel):
+    name: str
+    correct: int = 0
+    wrong: int = 0
 
 
-@api.post("/admin/notes")
-async def create_note(body: NoteIn, admin: dict = Depends(admin_user)):
-    doc = {"id": str(uuid.uuid4()), **body.model_dump(),
-           "published_at": now_iso(), "created_at": now_iso()}
-    await db.study_notes.insert_one(doc)
-    doc.pop("_id", None)
-    return doc
+class ScoreCalcIn(BaseModel):
+    exam_id: str
+    sections: List[ScoreCalcSectionIn]
 
 
-@api.put("/admin/notes/{note_id}")
-async def update_note(note_id: str, body: NoteIn, admin: dict = Depends(admin_user)):
-    await db.study_notes.update_one({"id": note_id}, {"$set": body.model_dump()})
-    return await db.study_notes.find_one({"id": note_id}, {"_id": 0})
+@api.post("/score/calculate")
+async def calculate_score(body: ScoreCalcIn, db: AsyncSession = Depends(get_db)):
+    res = await db.execute(select(M.Exam).where(M.Exam.id == body.exam_id))
+    exam = res.scalars().first()
+    if not exam or not exam.scoring_config:
+        raise HTTPException(status_code=404, detail="Sınav puanlama yapılandırması bulunamadı")
+
+    cfg = exam.scoring_config
+    base_score = float(cfg.get("base_score", 100.0))
+    multiplier = float(cfg.get("multiplier", 1.0))
+    cfg_sections = {s["name"]: s for s in cfg.get("sections", [])}
+
+    total_net = 0.0
+    weighted_score = 0.0
+    details = []
+
+    for user_sec in body.sections:
+        sec_cfg = cfg_sections.get(user_sec.name, {})
+        penalty = float(sec_cfg.get("wrong_penalty", 0.25))
+        coeff = float(sec_cfg.get("coefficient", 1.0))
+
+        net = round(user_sec.correct - (user_sec.wrong * penalty), 2)
+        total_net += net
+        weighted_score += net * coeff
+        details.append({
+            "name": user_sec.name,
+            "correct": user_sec.correct,
+            "wrong": user_sec.wrong,
+            "net": net,
+            "coefficient": coeff,
+        })
+
+    final_score = round(base_score + (weighted_score * multiplier), 2)
+    return {
+        "score": final_score,
+        "total_net": round(total_net, 2),
+        "score_type": cfg.get("score_type", "Ağırlıklı Puan"),
+        "details": details,
+    }
 
 
-@api.delete("/admin/notes/{note_id}")
-async def delete_note(note_id: str, admin: dict = Depends(admin_user)):
-    await db.study_notes.delete_one({"id": note_id})
+# ============ LEADERBOARD ============
+@api.get("/leaderboard")
+async def leaderboard(period: str = "all", exam_id: Optional[str] = None, db: AsyncSession = Depends(get_db)):
+    stmt = select(M.User).where(M.User.role == "user").order_by(desc(M.User.xp)).limit(50)
+    res = await db.execute(stmt)
+    users = res.scalars().all()
+    rankings = []
+    for rank, u in enumerate(users, start=1):
+        d = u.to_dict()
+        d["rank"] = rank
+        rankings.append(d)
+    return rankings
+
+
+# ============ AI COACH ============
+@api.post("/ai/coach")
+async def ai_coach(user: dict = Depends(current_user), db: AsyncSession = Depends(get_db)):
+    uid = user["id"]
+    ans_res = await db.execute(
+        select(M.UserAnswer.topic_id, M.UserAnswer.is_correct)
+        .where(M.UserAnswer.user_id == uid)
+    )
+    all_answers = ans_res.all()
+    all_ans = len(all_answers)
+    correct_ans = sum(1 for a in all_answers if a.is_correct)
+    overall = round((correct_ans / max(1, all_ans)) * 100, 1)
+
+    # Average score
+    res_stmt = select(func.avg(M.UserTestResult.score)).where(M.UserTestResult.user_id == uid)
+    avg_score = (await db.execute(res_stmt)).scalar()
+    avg_score = round(float(avg_score), 1) if avg_score is not None else None
+
+    # Weak & Strong topics
+    topic_map: Dict[str, Dict[str, int]] = {}
+    for a in all_answers:
+        if a.topic_id not in topic_map:
+            topic_map[a.topic_id] = {"total": 0, "correct": 0}
+        topic_map[a.topic_id]["total"] += 1
+        if a.is_correct:
+            topic_map[a.topic_id]["correct"] += 1
+
+    t_ids = list(topic_map.keys())
+    topics = {}
+    if t_ids:
+        t_res = await db.execute(select(M.Topic).where(M.Topic.id.in_(t_ids)))
+        topics = {t.id: t.name for t in t_res.scalars().all()}
+
+    weak, strong = [], []
+    for tid, st in topic_map.items():
+        rate = (st["correct"] / st["total"]) * 100
+        tname = topics.get(tid, "Konu")
+        if rate < 60:
+            weak.append(tname)
+        else:
+            strong.append(tname)
+
+    target_exam = ""
+    if user.get("target_exams"):
+        te_res = await db.execute(select(M.Exam).where(M.Exam.id == user["target_exams"][0]))
+        te = te_res.scalars().first()
+        target_exam = te.name if te else ""
+
+    context = {
+        "user_id": uid,
+        "target_exam": target_exam,
+        "target_score": user.get("target_score"),
+        "avg_score": avg_score,
+        "daily_goal": user.get("daily_goal", 20),
+        "total_solved": all_ans,
+        "overall_success": overall,
+        "weak": weak,
+        "strong": strong,
+    }
+
+    try:
+        result = await AICoach.generate_coach(context)
+    except Exception as ex:
+        logger.error(f"AI coach error: {ex}")
+        raise HTTPException(status_code=502, detail="AI önerisi şu an üretilemedi, lütfen tekrar deneyin.")
+
+    rec = M.AIRecommendation(
+        id=str(uuid.uuid4()),
+        user_id=uid,
+        result=result,
+        created_at=now_iso(),
+    )
+    db.add(rec)
+    await db.commit()
+    return rec.to_dict()
+
+
+@api.get("/ai/coach/latest")
+async def ai_coach_latest(user: dict = Depends(current_user), db: AsyncSession = Depends(get_db)):
+    res = await db.execute(
+        select(M.AIRecommendation)
+        .where(M.AIRecommendation.user_id == user["id"])
+        .order_by(desc(M.AIRecommendation.created_at))
+        .limit(1)
+    )
+    rec = res.scalars().first()
+    return rec.to_dict() if rec else {}
+
+
+# ============ ADMIN ANALYTICS & CRUD ============
+@api.get("/admin/stats")
+async def admin_stats(admin: dict = Depends(admin_user), db: AsyncSession = Depends(get_db)):
+    return {
+        "users": (await db.execute(select(func.count()).select_from(M.User).where(M.User.role == "user"))).scalar() or 0,
+        "exams": (await db.execute(select(func.count()).select_from(M.Exam))).scalar() or 0,
+        "questions": (await db.execute(select(func.count()).select_from(M.Question))).scalar() or 0,
+        "tests": (await db.execute(select(func.count()).select_from(M.Test))).scalar() or 0,
+        "answers": (await db.execute(select(func.count()).select_from(M.UserAnswer))).scalar() or 0,
+        "results": (await db.execute(select(func.count()).select_from(M.UserTestResult))).scalar() or 0,
+    }
+
+
+@api.post("/admin/exams")
+async def create_exam(body: ExamIn, admin: dict = Depends(admin_user), db: AsyncSession = Depends(get_db)):
+    exam = M.Exam(
+        id=str(uuid.uuid4()),
+        name=body.name,
+        description=body.description,
+        exam_type=body.exam_type,
+        status=body.status,
+        created_at=now_iso(),
+    )
+    db.add(exam)
+    await db.commit()
+    return exam.to_dict()
+
+
+@api.put("/admin/exams/{exam_id}")
+async def update_exam(exam_id: str, body: dict, admin: dict = Depends(admin_user), db: AsyncSession = Depends(get_db)):
+    res = await db.execute(select(M.Exam).where(M.Exam.id == exam_id))
+    exam = res.scalars().first()
+    if not exam:
+        raise HTTPException(status_code=404, detail="Sınav bulunamadı")
+    for k, v in body.items():
+        if hasattr(exam, k):
+            setattr(exam, k, v)
+    await db.commit()
+    return exam.to_dict()
+
+
+@api.delete("/admin/exams/{exam_id}")
+async def delete_exam(exam_id: str, admin: dict = Depends(admin_user), db: AsyncSession = Depends(get_db)):
+    res = await db.execute(select(M.Exam).where(M.Exam.id == exam_id))
+    exam = res.scalars().first()
+    if not exam:
+        raise HTTPException(status_code=404, detail="Sınav bulunamadı")
+    await db.delete(exam)
+    await db.commit()
+    return {"ok": True}
+
+
+@api.post("/admin/subjects")
+async def create_subject(body: SubjectIn, admin: dict = Depends(admin_user), db: AsyncSession = Depends(get_db)):
+    subj = M.Subject(
+        id=str(uuid.uuid4()),
+        exam_id=body.exam_id,
+        name=body.name,
+        slug=body.slug,
+        order=body.order,
+        created_at=now_iso(),
+    )
+    db.add(subj)
+    await db.commit()
+    return subj.to_dict()
+
+
+@api.delete("/admin/subjects/{subject_id}")
+async def delete_subject(subject_id: str, admin: dict = Depends(admin_user), db: AsyncSession = Depends(get_db)):
+    res = await db.execute(select(M.Subject).where(M.Subject.id == subject_id))
+    subj = res.scalars().first()
+    if not subj:
+        raise HTTPException(status_code=404, detail="Ders bulunamadı")
+    await db.delete(subj)
+    await db.commit()
+    return {"ok": True}
+
+
+@api.post("/admin/topics")
+async def create_topic(body: TopicIn, admin: dict = Depends(admin_user), db: AsyncSession = Depends(get_db)):
+    topic = M.Topic(
+        id=str(uuid.uuid4()),
+        exam_id=body.exam_id,
+        subject_id=body.subject_id,
+        name=body.name,
+        order=body.order,
+        created_at=now_iso(),
+    )
+    db.add(topic)
+    await db.commit()
+    return topic.to_dict()
+
+
+@api.delete("/admin/topics/{topic_id}")
+async def delete_topic(topic_id: str, admin: dict = Depends(admin_user), db: AsyncSession = Depends(get_db)):
+    res = await db.execute(select(M.Topic).where(M.Topic.id == topic_id))
+    topic = res.scalars().first()
+    if not topic:
+        raise HTTPException(status_code=404, detail="Konu bulunamadı")
+    await db.delete(topic)
+    await db.commit()
+    return {"ok": True}
+
+
+@api.post("/admin/questions")
+async def create_question(body: QuestionIn, admin: dict = Depends(admin_user), db: AsyncSession = Depends(get_db)):
+    q = M.Question(
+        id=str(uuid.uuid4()),
+        exam_id=body.exam_id,
+        subject_id=body.subject_id,
+        topic_id=body.topic_id,
+        subtopic_id=body.subtopic_id,
+        question_text=body.question_text,
+        option_a=body.option_a,
+        option_b=body.option_b,
+        option_c=body.option_c,
+        option_d=body.option_d,
+        option_e=body.option_e or "",
+        correct_answer=body.correct_answer.upper(),
+        explanation=body.explanation,
+        difficulty=body.difficulty,
+        source=body.source,
+        year=body.year,
+        tags=body.tags,
+        created_at=now_iso(),
+        updated_at=now_iso(),
+    )
+    db.add(q)
+    await db.commit()
+    return q.to_dict()
+
+
+@api.put("/admin/questions/{question_id}")
+async def update_question(question_id: str, body: dict, admin: dict = Depends(admin_user), db: AsyncSession = Depends(get_db)):
+    res = await db.execute(select(M.Question).where(M.Question.id == question_id))
+    q = res.scalars().first()
+    if not q:
+        raise HTTPException(status_code=404, detail="Soru bulunamadı")
+    for k, v in body.items():
+        if hasattr(q, k):
+            setattr(q, k, v)
+    q.updated_at = now_iso()
+    await db.commit()
+    return q.to_dict()
+
+
+@api.delete("/admin/questions/{question_id}")
+async def delete_question(question_id: str, admin: dict = Depends(admin_user), db: AsyncSession = Depends(get_db)):
+    res = await db.execute(select(M.Question).where(M.Question.id == question_id))
+    q = res.scalars().first()
+    if not q:
+        raise HTTPException(status_code=404, detail="Soru bulunamadı")
+    await db.delete(q)
+    await db.commit()
+    return {"ok": True}
+
+
+@api.post("/admin/tests")
+async def create_test(body: TestIn, admin: dict = Depends(admin_user), db: AsyncSession = Depends(get_db)):
+    test = M.Test(
+        id=str(uuid.uuid4()),
+        name=body.name,
+        description=body.description,
+        exam_id=body.exam_id,
+        duration_minutes=body.duration_minutes,
+        question_ids=body.question_ids,
+        difficulty=body.difficulty,
+        status=body.status,
+        created_at=now_iso(),
+    )
+    db.add(test)
+    await db.commit()
+    return test.to_dict()
+
+
+@api.delete("/admin/tests/{test_id}")
+async def delete_test(test_id: str, admin: dict = Depends(admin_user), db: AsyncSession = Depends(get_db)):
+    res = await db.execute(select(M.Test).where(M.Test.id == test_id))
+    t = res.scalars().first()
+    if not t:
+        raise HTTPException(status_code=404, detail="Deneme bulunamadı")
+    await db.delete(t)
+    await db.commit()
     return {"ok": True}
 
 
 # ============ FILE UPLOAD / STORAGE ============
 @api.post("/admin/upload")
-async def upload_file(file: UploadFile = File(...), admin: dict = Depends(admin_user)):
+async def upload_file(
+    file: UploadFile = File(...),
+    admin: dict = Depends(admin_user),
+    db: AsyncSession = Depends(get_db),
+):
     ext = (file.filename.rsplit(".", 1)[-1] if "." in file.filename else "bin").lower()
-    path = f"{S.APP_NAME}/uploads/{uuid.uuid4()}.{ext}"
+    path = f"uploads/{uuid.uuid4()}.{ext}"
     data = await file.read()
     content_type = file.content_type or S.MIME_TYPES.get(ext, "application/octet-stream")
     result = S.put_object(path, data, content_type)
-    await db.files.insert_one({
-        "id": str(uuid.uuid4()), "storage_path": result["path"],
-        "original_filename": file.filename, "content_type": content_type,
-        "size": result.get("size", len(data)), "is_deleted": False,
-        "created_at": now_iso(),
-    })
+
+    record = M.FileRecord(
+        id=str(uuid.uuid4()),
+        storage_path=result["path"],
+        original_filename=file.filename,
+        content_type=content_type,
+        size=result.get("size", len(data)),
+        is_deleted=False,
+        created_at=now_iso(),
+    )
+    db.add(record)
+    await db.commit()
     return {"path": result["path"], "name": file.filename, "content_type": content_type}
 
 
 @api.get("/files/{path:path}")
-async def download_file(path: str, authorization: str = Header(None), auth: str = Query(None)):
+async def download_file(
+    path: str,
+    authorization: str = Header(None),
+    auth: str = Query(None),
+    db: AsyncSession = Depends(get_db),
+):
     token = None
     if authorization and authorization.startswith("Bearer "):
         token = authorization[7:]
@@ -777,216 +1094,70 @@ async def download_file(path: str, authorization: str = Header(None), auth: str 
         token = auth
     if not token:
         raise HTTPException(status_code=401, detail="Yetkisiz")
-    record = await db.files.find_one({"storage_path": path, "is_deleted": False})
-    if not record:
+
+    res = await db.execute(select(M.FileRecord).where(and_(M.FileRecord.storage_path == path, M.FileRecord.is_deleted == False)))
+    record = res.scalars().first()
+    try:
+        data, ct = S.get_object(path)
+    except FileNotFoundError:
         raise HTTPException(status_code=404, detail="Dosya bulunamadı")
-    data, ct = S.get_object(path)
-    return Response(content=data, media_type=record.get("content_type", ct))
+    media_type = record.content_type if record else ct
+    return Response(content=data, media_type=media_type)
 
 
 # ============ BULK CSV IMPORT ============
 @api.post("/admin/questions/import-csv")
-async def import_csv(file: UploadFile = File(...), admin: dict = Depends(admin_user)):
+async def import_csv(
+    file: UploadFile = File(...),
+    admin: dict = Depends(admin_user),
+    db: AsyncSession = Depends(get_db),
+):
     raw = (await file.read()).decode("utf-8-sig", errors="replace")
     reader = csv.DictReader(io.StringIO(raw))
-    required = ["exam", "subject", "topic", "question", "option_a", "option_b", "option_c", "option_d", "correct_answer"]
+    created = 0
+    errors = []
 
-    exams = {e["name"].strip().lower(): e for e in await db.exams.find({}, {"_id": 0}).to_list(500)}
-    subjects = await db.subjects.find({}, {"_id": 0}).to_list(2000)
-    topics = await db.topics.find({}, {"_id": 0}).to_list(5000)
-    existing_q = {q["question_text"].strip().lower() for q in await db.questions.find({}, {"question_text": 1, "_id": 0}).to_list(100000)}
+    for idx, row in enumerate(reader, start=2):
+        exam_id = row.get("exam_id", "").strip()
+        subject_id = row.get("subject_id", "").strip()
+        topic_id = row.get("topic_id", "").strip()
+        text = row.get("question_text", "").strip()
+        correct = row.get("correct_answer", "").strip().upper()
 
-    inserted, errors, duplicates = 0, [], 0
-    docs = []
-    for i, row in enumerate(reader, start=2):
-        row = {(k or "").strip().lower(): (v or "").strip() for k, v in row.items()}
-        missing = [c for c in required if not row.get(c)]
-        if missing:
-            errors.append({"row": i, "reason": f"Eksik alan: {', '.join(missing)}"})
+        if not (exam_id and subject_id and topic_id and text and correct):
+            errors.append(f"Satır {idx}: Zorunlu alanlar eksik")
             continue
-        exam = exams.get(row["exam"].lower())
-        if not exam:
-            errors.append({"row": i, "reason": f"Sınav bulunamadı: {row['exam']}"})
-            continue
-        subj = next((s for s in subjects if s["exam_id"] == exam["id"] and s["name"].strip().lower() == row["subject"].lower()), None)
-        if not subj:
-            errors.append({"row": i, "reason": f"Ders bulunamadı: {row['subject']}"})
-            continue
-        topic = next((t for t in topics if t["subject_id"] == subj["id"] and t["name"].strip().lower() == row["topic"].lower()), None)
-        if not topic:
-            errors.append({"row": i, "reason": f"Konu bulunamadı: {row['topic']}"})
-            continue
-        if row["correct_answer"].upper() not in ["A", "B", "C", "D", "E"]:
-            errors.append({"row": i, "reason": "Geçersiz cevap anahtarı"})
-            continue
-        if row["question"].lower() in existing_q:
-            duplicates += 1
-            continue
-        existing_q.add(row["question"].lower())
-        docs.append({
-            "id": str(uuid.uuid4()), "exam_id": exam["id"], "subject_id": subj["id"],
-            "topic_id": topic["id"], "subtopic_id": None, "question_text": row["question"],
-            "question_type": "multiple_choice",
-            "option_a": row["option_a"], "option_b": row["option_b"], "option_c": row["option_c"],
-            "option_d": row["option_d"], "option_e": row.get("option_e", ""),
-            "correct_answer": row["correct_answer"].upper(), "explanation": row.get("explanation", ""),
-            "difficulty": row.get("difficulty", "orta") or "orta", "source": "CSV Import",
-            "year": None, "tags": [subj["name"], topic["name"]], "status": "active",
-            "created_at": now_iso(), "updated_at": now_iso(),
-        })
-        inserted += 1
-    if docs:
-        await db.questions.insert_many(docs)
-    total = inserted + duplicates + len(errors)
-    return {"total": total, "inserted": inserted, "duplicates": duplicates,
-            "error_count": len(errors), "errors": errors[:50]}
 
+        q = M.Question(
+            id=str(uuid.uuid4()),
+            exam_id=exam_id,
+            subject_id=subject_id,
+            topic_id=topic_id,
+            question_text=text,
+            option_a=row.get("option_a", "").strip(),
+            option_b=row.get("option_b", "").strip(),
+            option_c=row.get("option_c", "").strip(),
+            option_d=row.get("option_d", "").strip(),
+            option_e=row.get("option_e", "").strip(),
+            correct_answer=correct,
+            explanation=row.get("explanation", "").strip(),
+            difficulty=row.get("difficulty", "orta").strip().lower(),
+            created_at=now_iso(),
+            updated_at=now_iso(),
+        )
+        db.add(q)
+        created += 1
 
-# ============ SCORING (per-exam configurable) ============
-class ScoringSection(BaseModel):
-    name: str
-    question_count: int = 0
-    wrong_penalty: float = 0.25   # kaç yanlış 1 doğruyu götürür => 1/penalty
-    coefficient: float = 1.0
-
-
-class ScoringConfig(BaseModel):
-    sections: List[ScoringSection]
-    base_score: float = 100.0
-    multiplier: float = 1.0
-    score_type: str = "Ağırlıklı Puan"
-
-
-class CalcSection(BaseModel):
-    name: str
-    correct: int = 0
-    wrong: int = 0
-    blank: int = 0
-
-
-class CalcIn(BaseModel):
-    exam_id: str
-    sections: List[CalcSection]
-
-
-@api.get("/exams/{exam_id}/scoring")
-async def get_scoring(exam_id: str):
-    e = await db.exams.find_one({"id": exam_id}, {"_id": 0})
-    if not e:
-        raise HTTPException(status_code=404, detail="Sınav bulunamadı")
-    cfg = e.get("scoring_config")
-    if cfg and cfg.get("sections"):
-        return cfg
-    subs = await db.subjects.find({"exam_id": exam_id}).sort("order", 1).to_list(100)
-    return {
-        "sections": [{"name": s["name"], "question_count": 20, "wrong_penalty": 0.25, "coefficient": 1.0} for s in subs],
-        "base_score": 100.0, "multiplier": 1.0, "score_type": "Ham Puan",
-    }
-
-
-@api.put("/admin/exams/{exam_id}/scoring")
-async def set_scoring(exam_id: str, body: ScoringConfig, admin: dict = Depends(admin_user)):
-    await db.exams.update_one({"id": exam_id}, {"$set": {"scoring_config": body.model_dump()}})
-    return {"ok": True, "scoring_config": body.model_dump()}
-
-
-@api.post("/score/calculate")
-async def calculate_score(body: CalcIn, user: dict = Depends(current_user)):
-    e = await db.exams.find_one({"id": body.exam_id}, {"_id": 0})
-    if not e:
-        raise HTTPException(status_code=404, detail="Sınav bulunamadı")
-    cfg = e.get("scoring_config") or {"sections": [], "base_score": 100.0, "multiplier": 1.0, "score_type": "Ham Puan"}
-    cfg_secs = {s["name"]: s for s in cfg.get("sections", [])}
-    breakdown = []
-    weighted = 0.0
-    total_net = 0.0
-    for sec in body.sections:
-        conf = cfg_secs.get(sec.name, {"wrong_penalty": 0.25, "coefficient": 1.0})
-        penalty = conf.get("wrong_penalty", 0.25)
-        coef = conf.get("coefficient", 1.0)
-        net = round(sec.correct - sec.wrong * penalty, 2)
-        total_net += net
-        weighted += net * coef
-        breakdown.append({"name": sec.name, "net": net, "coefficient": coef,
-                          "correct": sec.correct, "wrong": sec.wrong, "blank": sec.blank})
-    score = round(cfg.get("base_score", 100.0) + weighted * cfg.get("multiplier", 1.0), 2)
-    return {"score": score, "total_net": round(total_net, 2), "score_type": cfg.get("score_type", "Ham Puan"),
-            "breakdown": breakdown}
-
-
-# ============ AI COACH (LLM) ============
-@api.post("/ai/coach")
-async def ai_coach(user: dict = Depends(current_user)):
-    uid = str(user["_id"])
-    prof = await topic_proficiency(uid)
-    results = await db.user_test_results.find({"user_id": uid}, {"_id": 0}).to_list(200)
-    avg_score = round(sum(r["score"] for r in results) / len(results), 1) if results else 0
-    all_ans = await db.user_answers.count_documents({"user_id": uid})
-    corr = await db.user_answers.count_documents({"user_id": uid, "is_correct": True})
-    ans_nb = await db.user_answers.count_documents({"user_id": uid, "is_blank": False})
-    overall = round(corr / ans_nb * 100, 1) if ans_nb else 0
-    weak = [f"{p['topic_name']} (%{p['proficiency']})" for p in prof if p["status"] != "İyi"][:5]
-    strong = [f"{p['topic_name']} (%{p['proficiency']})" for p in prof if p["status"] == "İyi"][:5]
-
-    target_exam = ""
-    if user.get("target_exams"):
-        te = await db.exams.find_one({"id": user["target_exams"][0]}, {"_id": 0})
-        target_exam = te["name"] if te else ""
-
-    context = {
-        "user_id": uid, "target_exam": target_exam, "target_score": user.get("target_score"),
-        "avg_score": avg_score, "daily_goal": user.get("daily_goal", 20),
-        "total_solved": all_ans, "overall_success": overall, "weak": weak, "strong": strong,
-    }
-    try:
-        result = await AICoach.generate_coach(context)
-    except Exception as ex:
-        logger.error(f"AI coach error: {ex}")
-        raise HTTPException(status_code=502, detail="AI önerisi şu an üretilemedi, lütfen tekrar deneyin.")
-
-    rec = {"id": str(uuid.uuid4()), "user_id": uid, "result": result, "created_at": now_iso()}
-    await db.ai_recommendations.insert_one(dict(rec))
-    rec.pop("_id", None)
-    return rec
-
-
-@api.get("/ai/coach/latest")
-async def ai_coach_latest(user: dict = Depends(current_user)):
-    rec = await db.ai_recommendations.find_one(
-        {"user_id": str(user["_id"])}, {"_id": 0}, sort=[("created_at", -1)])
-    return rec or {}
-
-
-# ============ ADMIN ANALYTICS ============
-@api.get("/admin/stats")
-async def admin_stats(admin: dict = Depends(admin_user)):
-    return {
-        "users": await db.users.count_documents({"role": "user"}),
-        "exams": await db.exams.count_documents({}),
-        "questions": await db.questions.count_documents({}),
-        "tests": await db.tests.count_documents({}),
-        "answers": await db.user_answers.count_documents({}),
-        "results": await db.user_test_results.count_documents({}),
-    }
-
-
-@api.get("/admin/users")
-async def admin_users(admin: dict = Depends(admin_user)):
-    users = await db.users.find({}, {"password_hash": 0}).to_list(1000)
-    return [A.public_user({**u}) for u in users]
-
-
-@api.get("/")
-async def root():
-    return {"message": "Sınav Hazırlık Platformu API"}
+    await db.commit()
+    return {"created": created, "errors": errors}
 
 
 app.include_router(api)
 
 app.add_middleware(
     CORSMiddleware,
+    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000", "http://localhost:8001"],
     allow_credentials=True,
-    allow_origins=["*"],
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -994,23 +1165,15 @@ app.add_middleware(
 
 @app.on_event("startup")
 async def startup():
-    await db.users.create_index("email", unique=True)
-    await db.login_attempts.create_index("identifier")
-    await db.questions.create_index([("exam_id", 1), ("subject_id", 1), ("topic_id", 1)])
-    await db.user_answers.create_index([("user_id", 1), ("topic_id", 1)])
-    await db.user_answers.create_index([("user_id", 1), ("created_at", -1)])
-    await db.user_test_results.create_index([("user_id", 1)])
-    await A.seed_admin(db)
-    await seed_content(db)
-    await seed_extras(db)
-    try:
-        S.init_storage()
-        logger.info("Storage initialized")
-    except Exception as e:
-        logger.error(f"Storage init failed: {e}")
-    logger.info("Startup complete: admin + content seeded")
+    await init_models()
+    S.init_storage()
+    async with AsyncSessionLocal() as session:
+        await A.seed_admin(session)
+        await seed_content(session)
+        await seed_extras(session)
+    logger.info("Startup complete: MySQL schema initialized, admin + content seeded")
 
 
 @app.on_event("shutdown")
 async def shutdown():
-    client.close()
+    await engine.dispose()

@@ -1,18 +1,21 @@
 import os
+import uuid
 import jwt
 import bcrypt
-import secrets
 from datetime import datetime, timezone, timedelta
-from bson import ObjectId
-from fastapi import APIRouter, HTTPException, Request, Response, Depends
+from fastapi import HTTPException, Request, Response, Depends
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+from database import get_db
+import models as M
 
 JWT_ALGORITHM = "HS256"
-ACCESS_MIN = 60 * 24  # 1 day access for smoother demo UX
+ACCESS_MIN = 60 * 24  # 1 day access for smoother UX
 REFRESH_DAYS = 7
 
 
 def get_jwt_secret() -> str:
-    return os.environ["JWT_SECRET"]
+    return os.environ.get("JWT_SECRET", "supersecret_jwt_key_development_netor_2026")
 
 
 def hash_password(password: str) -> str:
@@ -46,15 +49,15 @@ def create_refresh_token(user_id: str) -> str:
 
 
 def set_auth_cookies(response: Response, access: str, refresh: str):
-    response.set_cookie("access_token", access, httponly=True, secure=True,
-                        samesite="none", max_age=ACCESS_MIN * 60, path="/")
-    response.set_cookie("refresh_token", refresh, httponly=True, secure=True,
-                        samesite="none", max_age=REFRESH_DAYS * 86400, path="/")
+    response.set_cookie("access_token", access, httponly=True, secure=False,
+                        samesite="lax", max_age=ACCESS_MIN * 60, path="/")
+    response.set_cookie("refresh_token", refresh, httponly=True, secure=False,
+                        samesite="lax", max_age=REFRESH_DAYS * 86400, path="/")
 
 
 def public_user(user: dict) -> dict:
     return {
-        "id": str(user["_id"]),
+        "id": user.get("id") or user.get("_id"),
         "email": user["email"],
         "name": user.get("name", ""),
         "username": user.get("username", ""),
@@ -69,7 +72,7 @@ def public_user(user: dict) -> dict:
     }
 
 
-def _extract_token(request: Request):
+def extract_token(request: Request):
     token = request.cookies.get("access_token")
     if not token:
         auth = request.headers.get("Authorization", "")
@@ -78,41 +81,50 @@ def _extract_token(request: Request):
     return token
 
 
-async def get_current_user_from_db(request: Request, db) -> dict:
-    token = _extract_token(request)
+async def get_current_user(request: Request, db: AsyncSession = Depends(get_db)) -> dict:
+    token = extract_token(request)
     if not token:
         raise HTTPException(status_code=401, detail="Giriş yapmanız gerekiyor")
     try:
         payload = jwt.decode(token, get_jwt_secret(), algorithms=[JWT_ALGORITHM])
         if payload.get("type") != "access":
             raise HTTPException(status_code=401, detail="Geçersiz token")
-        user = await db.users.find_one({"_id": ObjectId(payload["sub"])})
-        if not user:
+        uid = payload["sub"]
+        result = await db.execute(select(M.User).where(M.User.id == uid))
+        user_obj = result.scalars().first()
+        if not user_obj:
             raise HTTPException(status_code=401, detail="Kullanıcı bulunamadı")
-        return user
+        return user_obj.to_dict()
     except jwt.ExpiredSignatureError:
         raise HTTPException(status_code=401, detail="Oturum süresi doldu")
     except jwt.InvalidTokenError:
         raise HTTPException(status_code=401, detail="Geçersiz token")
 
 
-async def seed_admin(db):
+async def seed_admin(db: AsyncSession):
     admin_email = os.environ.get("ADMIN_EMAIL", "admin@sinav.com").lower()
     admin_password = os.environ.get("ADMIN_PASSWORD", "admin123")
-    existing = await db.users.find_one({"email": admin_email})
+    result = await db.execute(select(M.User).where(M.User.email == admin_email))
+    existing = result.scalars().first()
+    now_str = datetime.now(timezone.utc).isoformat()
     if existing is None:
-        await db.users.insert_one({
-            "email": admin_email,
-            "password_hash": hash_password(admin_password),
-            "name": "Platform Admin",
-            "username": "admin",
-            "role": "admin",
-            "target_exams": [],
-            "daily_goal": 40,
-            "xp": 0,
-            "streak": 0,
-            "created_at": datetime.now(timezone.utc).isoformat(),
-        })
-    elif not verify_password(admin_password, existing["password_hash"]):
-        await db.users.update_one({"email": admin_email},
-                                  {"$set": {"password_hash": hash_password(admin_password)}})
+        new_admin = M.User(
+            id=str(uuid.uuid4()),
+            email=admin_email,
+            password_hash=hash_password(admin_password),
+            name="Platform Admin",
+            username="admin",
+            role="admin",
+            avatar="",
+            target_exams=[],
+            daily_goal=40,
+            xp=0,
+            streak=0,
+            created_at=now_str,
+            updated_at=now_str,
+        )
+        db.add(new_admin)
+        await db.commit()
+    elif not verify_password(admin_password, existing.password_hash):
+        existing.password_hash = hash_password(admin_password)
+        await db.commit()

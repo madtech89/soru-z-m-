@@ -3,12 +3,11 @@ import uuid
 
 import pytest
 import requests
-from dotenv import dotenv_values
+from pathlib import Path
 
-frontend_env = dotenv_values("/app/frontend/.env")
-base_url = os.environ.get("REACT_APP_BACKEND_URL") or frontend_env.get("REACT_APP_BACKEND_URL")
-if not base_url:
-    raise RuntimeError("REACT_APP_BACKEND_URL missing from env and /app/frontend/.env")
+ROOT_DIR = Path(__file__).parents[2]
+frontend_env = dotenv_values(ROOT_DIR / "frontend" / ".env")
+base_url = os.environ.get("REACT_APP_BACKEND_URL") or frontend_env.get("REACT_APP_BACKEND_URL") or "http://127.0.0.1:8000"
 BASE_URL = base_url.rstrip("/")
 API = f"{BASE_URL}/api"
 

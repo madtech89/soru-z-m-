@@ -46,7 +46,7 @@ export default function ExamPlayer() {
       setTest(t);
     })();
     return () => { mounted = false; };
-  }, [testId]);
+  }, [testId, lsKey]);
 
   const persist = useCallback((next = {}) => {
     localStorage.setItem(lsKey, JSON.stringify({
