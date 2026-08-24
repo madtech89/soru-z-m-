@@ -89,7 +89,7 @@ export default function Dashboard() {
             <span className="h-10 w-10 rounded-xl bg-subject-ai/15 grid place-items-center mb-4"><Brain size={19} className="text-subject-ai" /></span>
             <h3 className="font-heading font-bold text-lg">AI Koç önerisi</h3>
             <p className="text-sm text-zinc-500 mt-2 flex-1">
-              {d.weak_topics[0] ? `${d.weak_topics[0].topic_name} konusunda başarın %${d.weak_topics[0].proficiency}. Önce ders notunu incele, ardından 20 soru çöz.` : "Birkaç deneme çöz, kişisel önerini oluşturalım."}
+              {d.weak_topics?.[0] ? `${d.weak_topics[0].topic_name} konusunda başarın %${d.weak_topics[0].proficiency}. Önce ders notunu incele, ardından 20 soru çöz.` : "Birkaç deneme çöz, kişisel önerini oluşturalım."}
             </p>
             <Link to="/app/ai-koc" className="mt-4 text-subject-ai font-semibold text-sm flex items-center gap-1">AI Koç'a git <ArrowRight size={15} /></Link>
           </Card>
@@ -103,11 +103,12 @@ export default function Dashboard() {
             <Link to="/app/eksiklerim" className="text-sm text-subject-matematik font-semibold">Tümü</Link>
           </div>
           <div className="space-y-4">
-            {d.weak_topics.length === 0 && <p className="text-sm text-zinc-400">Harika, kritik eksik konun yok!</p>}
-            {d.weak_topics.map((t) => (
+            {(d.weak_topics || []).length === 0 && <p className="text-sm text-zinc-400">Harika, kritik eksik konun yok!</p>}
+            {(d.weak_topics || []).map((t) => (
               <div key={t.topic_id}>
                 <div className="flex items-center justify-between text-sm mb-1.5">
                   <span className="font-medium">{t.topic_name} <span className="text-zinc-400">· {t.subject_name}</span></span>
+
                   <span className="font-semibold" style={{ color: statusColor(t.status) }}>%{t.proficiency}</span>
                 </div>
                 <div className="h-2 rounded-full bg-zinc-100 overflow-hidden">

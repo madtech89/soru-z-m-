@@ -875,57 +875,120 @@ async def delete_chat_conversation(conv_id: str, user: dict = Depends(current_us
 
 
 # ============ USER DASHBOARD & STATS ============
+# ============ USER DASHBOARD & STATS ============
 @api.get("/user/dashboard")
 async def user_dashboard(user: dict = Depends(current_user), db: AsyncSession = Depends(get_db)):
     uid = user["id"]
     now = datetime.now(timezone.utc)
     today_start = datetime(now.year, now.month, now.day, tzinfo=timezone.utc).isoformat()
 
-    today_ans_stmt = select(func.count()).select_from(M.UserAnswer).where(
-        and_(M.UserAnswer.user_id == uid, M.UserAnswer.created_at >= today_start)
-    )
-    today_solved = (await db.execute(today_ans_stmt)).scalar() or 0
-
     all_ans_res = await db.execute(
-        select(M.UserAnswer.is_correct, M.UserAnswer.topic_id, M.UserAnswer.created_at)
+        select(M.UserAnswer.is_correct, M.UserAnswer.topic_id, M.UserAnswer.subject_id, M.UserAnswer.created_at)
         .where(M.UserAnswer.user_id == uid)
     )
     all_answers = all_ans_res.all()
+
+    today_answers = [a for a in all_answers if a.created_at >= today_start]
+    solved_today = len(today_answers)
+    correct_today = sum(1 for a in today_answers if a.is_correct)
+    success_today = round((correct_today / max(1, solved_today)) * 100, 1)
 
     total_answers = len(all_answers)
     correct_answers = sum(1 for a in all_answers if a.is_correct)
     overall_success = round((correct_answers / max(1, total_answers)) * 100, 1)
 
-    daily_stats = []
+    # 7 day series for charts
+    series = []
     for i in range(6, -1, -1):
         day_date = (now - timedelta(days=i)).date()
         day_str = day_date.strftime("%Y-%m-%d")
         count = sum(1 for a in all_answers if a.created_at.startswith(day_str))
-        daily_stats.append({
+        series.append({
             "day": day_date.strftime("%a"),
-            "date": day_str,
+            "date": day_date.strftime("%d %b"),
+            "solved": count,
             "count": count,
         })
 
+    # Recent test results
     results_res = await db.execute(
         select(M.UserTestResult)
         .where(M.UserTestResult.user_id == uid)
         .order_by(desc(M.UserTestResult.created_at))
-        .limit(5)
+        .limit(10)
     )
     recent_results = [r.to_dict() for r in results_res.scalars().all()]
+    total_tests = len(recent_results)
+    avg_score = round(sum(r["score"] for r in recent_results) / max(1, total_tests), 1) if total_tests > 0 else 0
+
+    # Calculate weak topics with subject names
+    topic_map: Dict[str, Dict[str, Any]] = {}
+    for a in all_answers:
+        if a.topic_id not in topic_map:
+            topic_map[a.topic_id] = {"total": 0, "correct": 0, "subject_id": a.subject_id}
+        topic_map[a.topic_id]["total"] += 1
+        if a.is_correct:
+            topic_map[a.topic_id]["correct"] += 1
+
+    t_ids = list(topic_map.keys())
+    topics = {}
+    subjects = {}
+    if t_ids:
+        t_res = await db.execute(select(M.Topic).where(M.Topic.id.in_(t_ids)))
+        topics = {t.id: t for t in t_res.scalars().all()}
+        s_ids = list({t.subject_id for t in topics.values()})
+        if s_ids:
+            s_res = await db.execute(select(M.Subject).where(M.Subject.id.in_(s_ids)))
+            subjects = {s.id: s.name for s in s_res.scalars().all()}
+
+    weak_topics_list = []
+    for tid, st in topic_map.items():
+        t = topics.get(tid)
+        tname = t.name if t else "Genel Konu"
+        sname = subjects.get(t.subject_id, "Genel") if t else "Genel"
+        prof = round((st["correct"] / max(1, st["total"])) * 100)
+        status = "Kritik Eksik" if prof < 50 else "Geliştirilmeli" if prof < 75 else "İyi"
+        weak_topics_list.append({
+            "topic_id": tid,
+            "topic_name": tname,
+            "subject_name": sname,
+            "proficiency": prof,
+            "status": status,
+            "total": st["total"],
+            "correct": st["correct"],
+        })
+    weak_topics_list = sorted(weak_topics_list, key=lambda x: x["proficiency"])
+
+    # Recommended tests
+    target_exams = user.get("target_exams") or []
+    test_stmt = select(M.Test).where(M.Test.status == "published")
+    if target_exams:
+        test_stmt = test_stmt.where(M.Test.exam_id == target_exams[0])
+    t_res = await db.execute(test_stmt.limit(4))
+    recommended_tests = [t.to_dict() for t in t_res.scalars().all()]
+    if not recommended_tests:
+        all_t_res = await db.execute(select(M.Test).where(M.Test.status == "published").limit(4))
+        recommended_tests = [t.to_dict() for t in all_t_res.scalars().all()]
 
     return {
-        "today_solved": today_solved,
+        "solved_today": solved_today,
+        "today_solved": solved_today,
         "daily_goal": user.get("daily_goal", 20),
+        "success_today": success_today,
         "total_solved": total_answers,
         "overall_success": overall_success,
+        "avg_score": avg_score,
+        "total_tests": total_tests,
         "xp": user.get("xp", 0),
         "streak": user.get("streak", 0),
         "level": user.get("level", 1),
-        "daily_stats": daily_stats,
+        "series": series,
+        "daily_stats": series,
+        "weak_topics": weak_topics_list,
         "recent_results": recent_results,
+        "recommended_tests": recommended_tests,
     }
+
 
 
 @api.get("/user/weak-topics")
@@ -1174,7 +1237,164 @@ async def admin_stats(admin: dict = Depends(admin_user), db: AsyncSession = Depe
     }
 
 
+@api.post("/admin/exams")
+async def admin_create_exam(body: ExamIn, admin: dict = Depends(admin_user), db: AsyncSession = Depends(get_db)):
+    exam_id = str(uuid.uuid4())
+    exam_obj = M.Exam(
+        id=exam_id,
+        name=body.name,
+        description=body.description,
+        exam_type=body.exam_type,
+        category=body.category,
+        status=body.status,
+        order=0,
+        created_at=now_iso(),
+    )
+    db.add(exam_obj)
+    await db.commit()
+    return exam_obj.to_dict()
+
+
+@api.post("/admin/subjects")
+async def admin_create_subject(body: SubjectIn, admin: dict = Depends(admin_user), db: AsyncSession = Depends(get_db)):
+    subj_obj = M.Subject(
+        id=str(uuid.uuid4()),
+        exam_id=body.exam_id,
+        name=body.name,
+        slug=body.slug,
+        order=body.order,
+        status="active",
+        created_at=now_iso(),
+    )
+    db.add(subj_obj)
+    await db.commit()
+    return subj_obj.to_dict()
+
+
+@api.post("/admin/topics")
+async def admin_create_topic(body: TopicIn, admin: dict = Depends(admin_user), db: AsyncSession = Depends(get_db)):
+    topic_obj = M.Topic(
+        id=str(uuid.uuid4()),
+        exam_id=body.exam_id,
+        subject_id=body.subject_id,
+        name=body.name,
+        order=body.order,
+        status="active",
+        created_at=now_iso(),
+    )
+    db.add(topic_obj)
+    await db.commit()
+    return topic_obj.to_dict()
+
+
+@api.post("/admin/subtopics")
+async def admin_create_subtopic(body: SubtopicIn, admin: dict = Depends(admin_user), db: AsyncSession = Depends(get_db)):
+    subtopic_obj = M.Subtopic(
+        id=str(uuid.uuid4()),
+        topic_id=body.topic_id,
+        name=body.name,
+        order=body.order,
+        created_at=now_iso(),
+    )
+    db.add(subtopic_obj)
+    await db.commit()
+    return subtopic_obj.to_dict()
+
+
+@api.post("/admin/questions")
+async def admin_create_question(body: QuestionIn, admin: dict = Depends(admin_user), db: AsyncSession = Depends(get_db)):
+    q_obj = M.Question(
+        id=str(uuid.uuid4()),
+        exam_id=body.exam_id,
+        subject_id=body.subject_id,
+        topic_id=body.topic_id,
+        subtopic_id=body.subtopic_id,
+        question_text=body.question_text,
+        option_a=body.option_a,
+        option_b=body.option_b,
+        option_c=body.option_c,
+        option_d=body.option_d,
+        option_e=body.option_e or "",
+        correct_answer=body.correct_answer,
+        explanation=body.explanation,
+        difficulty=body.difficulty,
+        source=body.source,
+        year=body.year,
+        tags=body.tags,
+        status="active",
+        created_at=now_iso(),
+        updated_at=now_iso(),
+    )
+    db.add(q_obj)
+    await db.commit()
+    return q_obj.to_dict()
+
+
+@api.post("/admin/tests")
+async def admin_create_test(body: TestIn, admin: dict = Depends(admin_user), db: AsyncSession = Depends(get_db)):
+    test_obj = M.Test(
+        id=str(uuid.uuid4()),
+        exam_id=body.exam_id,
+        name=body.name,
+        description=body.description,
+        duration_minutes=body.duration_minutes,
+        question_ids=body.question_ids,
+        difficulty=body.difficulty,
+        status=body.status,
+        created_at=now_iso(),
+    )
+    db.add(test_obj)
+    await db.commit()
+    return test_obj.to_dict()
+
+
+class NoteIn(BaseModel):
+    title: str
+    description: str = ""
+    exam_id: str
+    subject_id: str
+    topic_id: str
+    content: str = ""
+    video_url: str = ""
+    file_path: Optional[str] = None
+    file_name: Optional[str] = None
+
+
+@api.post("/admin/notes")
+async def admin_create_note(body: NoteIn, admin: dict = Depends(admin_user), db: AsyncSession = Depends(get_db)):
+    note_obj = M.StudyNote(
+        id=str(uuid.uuid4()),
+        title=body.title,
+        description=body.description,
+        exam_id=body.exam_id,
+        subject_id=body.subject_id,
+        topic_id=body.topic_id,
+        content=body.content,
+        video_url=body.video_url,
+        file_path=body.file_path,
+        file_name=body.file_name,
+        status="published",
+        published_at=now_iso(),
+        created_at=now_iso(),
+    )
+    db.add(note_obj)
+    await db.commit()
+    return note_obj.to_dict()
+
+
+@api.put("/admin/exams/{exam_id}/scoring")
+async def admin_save_scoring(exam_id: str, config: dict, admin: dict = Depends(admin_user), db: AsyncSession = Depends(get_db)):
+    res = await db.execute(select(M.Exam).where(M.Exam.id == exam_id))
+    exam = res.scalars().first()
+    if not exam:
+        raise HTTPException(status_code=404, detail="Sınav bulunamadı")
+    exam.scoring_config = config
+    await db.commit()
+    return {"ok": True}
+
+
 @api.post("/admin/upload")
+
 async def upload_file(
     file: UploadFile = File(...),
     admin: dict = Depends(admin_user),

@@ -340,29 +340,49 @@ export async function fetchAdminStats() {
 }
 
 export async function createExam(name, description, category = "universite") {
-  // admin action
+  const res = await api.post("/admin/exams", { name, description, category });
+  return res.data;
 }
 
 export async function createSubject(examId, name, slug = "general", order = 0) {
-  // admin action
+  const res = await api.post("/admin/subjects", { exam_id: examId, name, slug, order });
+  return res.data;
 }
 
 export async function createTopic(examId, subjectId, name, order = 0) {
-  // admin action
+  const res = await api.post("/admin/topics", { exam_id: examId, subject_id: subjectId, name, order });
+  return res.data;
 }
 
 export async function createSubtopic(topicId, name, order = 0) {
-  // admin action
+  const res = await api.post("/admin/subtopics", { topic_id: topicId, name, order });
+  return res.data;
 }
 
 export async function createTest(examId, name, description, durationMinutes, difficulty, questionIds) {
-  // admin action
+  const res = await api.post("/admin/tests", {
+    exam_id: examId,
+    name,
+    description,
+    duration_minutes: durationMinutes,
+    difficulty,
+    question_ids: questionIds,
+  });
+  return res.data;
 }
 
 export async function createQuestion(q) {
-  // admin action
+  const res = await api.post("/admin/questions", q);
+  return res.data;
 }
 
 export async function createNote(note) {
-  // admin action
+  const res = await api.post("/admin/notes", note);
+  return res.data;
 }
+
+export async function saveExamScoring(examId, config) {
+  const res = await api.put(`/admin/exams/${examId}/scoring`, config);
+  return res.data;
+}
+
