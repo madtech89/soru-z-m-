@@ -2,9 +2,8 @@ import { useEffect, useRef, useState } from "react";
 import { useSearchParams, useNavigate, Link } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import { Clock, ChevronLeft, ChevronRight, Check, X, Loader2, ListChecks, Sparkles, Trophy, ArrowRight, Target, UserPlus, LogIn } from "lucide-react";
-import { createPlacementTest, computePlacementResultLocal, savePlacementResult } from "@/lib/api";
+import { createPlacementTest, savePlacementResult } from "@/lib/api";
 import { useAuth } from "@/context/AuthContext";
-import { supabase } from "@/lib/supabase";
 import { statusColor, tone } from "@/lib/subjects";
 import { Card, EASE } from "@/app/ui";
 import { toast } from "sonner";
@@ -14,7 +13,7 @@ const OPTS = ["A", "B", "C", "D", "E"];
 export default function PlacementTest() {
   const [params] = useSearchParams();
   const examId = params.get("exam_id");
-  const { user, updateUser } = useAuth();
+  const { user, updateUser, register } = useAuth();
   const nav = useNavigate();
   const [test, setTest] = useState(null);
   const [idx, setIdx] = useState(0);
@@ -92,37 +91,17 @@ export default function PlacementTest() {
     e.preventDefault();
     setRegistering(true);
     try {
-      const { data, error } = await supabase.auth.signUp({
-        email: regForm.email,
-        password: regForm.password,
-        options: { data: { name: regForm.name } },
-      });
-      if (error) throw error;
-
-      const { error: profileError } = await supabase.from("profiles").insert({
-        id: data.user.id,
-        email: regForm.email,
-        name: regForm.name,
-        username: "",
-        role: "user",
-        avatar: "",
-        target_exams: [examId],
-        target_score: null,
-        daily_goal: 20,
-        xp: result.correct * 5,
-        streak: 0,
-        level: Math.floor((result.correct * 5) / 500) + 1,
-        placement_completed: true,
-      });
-      if (profileError) throw profileError;
-
-      await savePlacementResult(result, examId, data.user.id);
+      const newUser = await register(regForm.name, regForm.email, regForm.password);
+      if (newUser?.id) {
+        await savePlacementResult(result, examId, newUser.id);
+      }
       toast.success("Hesabın oluşturuldu ve sonucun kaydedildi!");
       nav("/app");
     } catch (err) {
       toast.error(err.message || "Kayıt yapılamadı.");
     } finally { setRegistering(false); }
   };
+
 
   // ============ RESULT SCREEN ============
   if (result) {

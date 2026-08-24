@@ -2,8 +2,7 @@ import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import { Brain, Sparkles, Target, BookOpen, Flag, TrendingUp, ArrowRight, Loader2, CalendarDays } from "lucide-react";
-import { fetchDashboard, fetchLatestAIRecommendation, generateAICoach } from "@/lib/api";
-import { supabase } from "@/lib/supabase";
+import { fetchDashboard, fetchLatestAIRecommendation, generateAICoach, fetchExams } from "@/lib/api";
 import { useAuth } from "@/context/AuthContext";
 import { PageHeader, Card, Spinner, EASE } from "@/app/ui";
 import { toast } from "sonner";
@@ -22,10 +21,10 @@ export default function AICoach() {
 
   if (!d) return <Spinner />;
 
-  const weakest = d.weak_topics[0];
+  const weakest = d.weak_topics?.[0];
   const target = user?.target_score;
   const gap = target && d.avg_score ? Math.max(0, target - d.avg_score) : null;
-  const recQ = weakest ? (weakest.status === "Kritik Eksik" ? 30 : 20) : d.daily_goal;
+  const recQ = weakest ? (weakest.status === "Kritik Eksik" ? 30 : 20) : (d.daily_goal || 20);
 
   const advice = weakest
     ? `Son performansına göre en zayıf konun "${weakest.topic_name}" (${weakest.subject_name}) — yeterliliğin %${weakest.proficiency}. Önce bu konunun ders notunu incelemen, ardından orta zorlukta ${recQ} soru çözmen önerilir.`
@@ -34,24 +33,10 @@ export default function AICoach() {
   const generate = async () => {
     setGen(true);
     try {
-      const targetExams = user?.target_exams || [];
-      let examName = "Genel Sınav";
-      if (targetExams.length > 0) {
-        const { data: exam } = await supabase.from("exams").select("name").in("id", targetExams).limit(1).maybeSingle();
-        if (exam?.name) examName = exam.name;
-      }
-
       const result = await generateAICoach({
         userId: user.id,
-        target_exam: examName,
-        target_score: target,
-        avg_score: d.avg_score,
-        daily_goal: d.daily_goal,
-        total_solved: d.total_solved,
-        overall_success: d.overall_success,
-        weak: d.weak_topics.slice(0, 5),
-        strong: [],
       });
+
       setAi(result);
       toast.success("AI analizin hazır!");
     } catch {
