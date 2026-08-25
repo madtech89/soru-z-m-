@@ -24,6 +24,9 @@ import Profile from "@/app/Profile";
 import Admin from "@/app/Admin";
 import TercihRobotu from "@/app/TercihRobotu";
 import GeriSayim from "@/app/GeriSayim";
+import KrediAl from "@/app/KrediAl";
+import BlogList from "@/pages/BlogList";
+import BlogDetail from "@/pages/BlogDetail";
 import { Loader2 } from "lucide-react";
 
 function AppShell() {
@@ -57,6 +60,8 @@ export default function App() {
       <Route path="/register" element={<Register />} />
       <Route path="/onboarding" element={<Onboarding />} />
       <Route path="/test" element={<PlacementTest />} />
+      <Route path="/blog" element={<BlogList />} />
+      <Route path="/blog/:slug" element={<BlogDetail />} />
       <Route
         path="/app"
         element={
@@ -81,6 +86,7 @@ export default function App() {
         <Route path="incele/:testId/:sessionId" element={<RequireAuth><ExamReview /></RequireAuth>} />
         <Route path="incele/:testId" element={<RequireAuth><ExamReview /></RequireAuth>} />
         <Route path="profil" element={<RequireAuth><Profile /></RequireAuth>} />
+        <Route path="kredi-al" element={<RequireAuth><KrediAl /></RequireAuth>} />
         <Route path="admin" element={<RequireAuth><Admin /></RequireAuth>} />
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />

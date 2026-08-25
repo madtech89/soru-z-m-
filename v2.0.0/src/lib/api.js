@@ -22,19 +22,42 @@ export const SCORE_TYPES = [
   { key: "dil", label: "Dil (DİL)", desc: "İngiliz Dili, Mütercim-Tercümanlık, Dil Edebiyatı" },
 ];
 
+export const TERCIH_EXAM_TYPES = [
+  { key: "YKS", label: "YKS (Üniversite Tercih Robotu)", desc: "4 Yıllık Lisans (SAY, EA, SÖZ, DİL) ve 2 Yıllık Önlisans (TYT) Programları" },
+  { key: "LGS", label: "LGS (Lise Tercih Robotu)", desc: "Fen Liseleri, Anadolu Liseleri, Sosyal Bilimler ve Nitelikli Proje Liseleri" },
+  { key: "KPSS", label: "KPSS (Kamu Atama & Kadro Robotu)", desc: "Lisans & Önlisans Merkezi Memurluk, Sağlıkçı ve Öğretmen Atama Taban Puanları" },
+  { key: "DGS", label: "DGS (Dikey Geçiş Tercih Robotu)", desc: "2 Yıllık Önlisanstan 4 Yıllık Lisans Bölümlerine Geçiş Kontenjanları" },
+];
+
 export const EXAM_TYPES = [
-  { key: "YKS", label: "YKS (TYT + AYT)", desc: "Üniversiteye giriş sınavı" },
+
+  { key: "TYT", label: "YKS TYT", desc: "Temel Yeterlilik Testi" },
+  { key: "AYT", label: "YKS AYT", desc: "Alan Yeterlilik Testi" },
+  { key: "KPSS", label: "KPSS Lisans", desc: "Genel Yetenek & Genel Kültür" },
+  { key: "KPSS-A", label: "KPSS Alan Bilgisi", desc: "İktisat, Maliye, Hukuk, Muhasebe" },
+  { key: "KPSS-Egitim", label: "KPSS Eğitim Bilimleri", desc: "Öğretmenlik Alan Sınavı" },
+  { key: "ALES", label: "ALES", desc: "Akademik Personel ve Lisansüstü Giriş Sınavı" },
   { key: "DGS", label: "DGS", desc: "Dikey Geçiş Sınavı" },
-  { key: "ALES", label: "ALES", desc: "Akademik Personel ve Lisansüstü Eğitimi Giriş Sınavı" },
+  { key: "TUS", label: "TUS", desc: "Tıpta Uzmanlık Sınavı (Temel + Klinik)" },
+  { key: "DUS", label: "DUS", desc: "Diş Hekimliğinde Uzmanlık Sınavı" },
+  { key: "SMMM", label: "SMMM", desc: "Mali Müşavirlik Staj ve Yeterlilik" },
+  { key: "Hakimlik", label: "Hakimlik & Kaymakamlık", desc: "Adli ve İdari Yargı Sınavları" },
+  { key: "YDS", label: "YDS", desc: "Yabancı Dil Bilgisi Seviye Tespit Sınavı" },
+  { key: "YOKDIL", label: "YÖKDİL", desc: "YÖK Yabancı Dil Sınavı" },
+  { key: "MSU", label: "MSÜ", desc: "Milli Savunma Üniversitesi Askeri Öğrenci Sınavı" },
+  { key: "LGS", label: "LGS", desc: "Liselere Geçiş Sistemi" },
 ];
 
 export const EXAM_CATEGORIES = [
-  { key: "universite", label: "Üniversite Sınavları", desc: "YKS, TYT, AYT, DGS, ALES, YDS, YÖKDİL" },
-  { key: "kpss", label: "KPSS & Kamu", desc: "KPSS Lisans, Ön Lisans, Kaymakamlık, Banka" },
-  { key: "saglik", label: "Sağlık & Tıp", desc: "TUS, DUS, Eczacılık, Hemşirelik" },
-  { key: "ortaokul", label: "Ortaokul & Lise", desc: "LGS, Bursluluk" },
-  { key: "mesleki", label: "Mesleki & Uzmanlık", desc: "SMM, İSG, Hakimlik" },
+  { key: "universite", label: "Üniversite & Lisansüstü", desc: "YKS TYT, YKS AYT, ALES, DGS" },
+  { key: "kpss", label: "KPSS & Kariyer Meslek", desc: "KPSS Lisans, KPSS Alan (A Grubu), Eğitim Bilimleri" },
+  { key: "saglik", label: "Sağlık & Tıp Uzmanlık", desc: "TUS (Temel & Klinik Tıp), DUS (Diş Hekimliği)" },
+  { key: "mesleki", label: "Mesleki & Mali Ruhsat", desc: "SMMM Staja Başlama & Yeterlilik, Adli/İdari Hakimlik" },
+  { key: "dil", label: "Yabancı Dil Sınavları", desc: "YDS (İngilizce), YÖKDİL (Sağlık, Fen, Sosyal)" },
+  { key: "askeri", label: "Askeri & Güvenlik", desc: "MSÜ (Milli Savunma Üniversitesi), Polislik" },
+  { key: "ortaokul", label: "Liselere Giriş (MEB)", desc: "LGS (Liselere Geçiş Sistemi), Bursluluk" },
 ];
+
 
 export function getLevelInfo(xp = 0) {
   const currentXP = Number(xp) || 0;
@@ -57,6 +80,11 @@ export function getLevelInfo(xp = 0) {
 // ============ EXAMS & SCORING ============
 export async function fetchExams() {
   const res = await api.get("/exams");
+  return res.data;
+}
+
+export async function updateExamDate(examId, dateString) {
+  const res = await api.put(`/admin/exams/${examId}/date`, { exam_date: dateString });
   return res.data;
 }
 
@@ -251,34 +279,42 @@ export async function calculateScore(examId, sections) {
 }
 
 // ============ TERCİH ROBOTU ============
-export async function fetchProgramRecommendations(scoreType, userScore, filters = {}) {
+export async function fetchProgramRecommendations(scoreType, userScore, userRank, filters = {}) {
   const params = {
     score_type: scoreType,
-    user_score: userScore,
-    page_size: 60,
+    user_score: userScore ? Number(userScore) : undefined,
+    user_rank: userRank ? Number(userRank) : undefined,
+    sort_by: filters.sortBy || "chance",
+    category_filter: filters.categoryFilter || "all",
+    page_size: 120,
   };
   if (filters.cities && filters.cities.length > 0) {
-    params.city = filters.cities[0];
+    params.cities = filters.cities.join(",");
   }
   if (filters.universities && filters.universities.length > 0) {
-    params.university = filters.universities[0];
+    params.universities = filters.universities.join(",");
   }
-  if (filters.programKeyword) {
-    params.search = filters.programKeyword;
+  if (filters.programs && filters.programs.length > 0) {
+    params.programs = filters.programs.join(",");
+  }
+  if (filters.search) {
+    params.search = filters.search;
   }
 
   const res = await api.get("/tercih/programs", { params });
   const items = res.data?.items || [];
-  const safe = Number(userScore) || 0;
 
   const guaranteed = items.filter((p) => p.recommendation_category === "guaranteed");
   const likely = items.filter((p) => p.recommendation_category === "likely");
   const reach = items.filter((p) => p.recommendation_category === "reach");
+  const dream = items.filter((p) => p.recommendation_category === "dream");
 
   return {
-    guaranteed: guaranteed.slice(0, 20),
-    likely: likely.slice(0, 20),
-    reach: reach.slice(0, 15),
+    all: items,
+    guaranteed,
+    likely,
+    reach,
+    dream,
     total: res.data?.total || items.length,
   };
 }
@@ -292,6 +328,38 @@ export async function fetchDistinctUniversities() {
   const res = await api.get("/tercih/universities");
   return res.data || [];
 }
+
+export async function fetchDistinctDepartments() {
+  const res = await api.get("/tercih/departments");
+  return res.data || [];
+}
+
+// Admin Tercih APIs
+export async function fetchAdminTercihPrograms(params = {}) {
+  const res = await api.get("/admin/tercih/programs", { params });
+  return res.data;
+}
+
+export async function createAdminTercihProgram(data) {
+  const res = await api.post("/admin/tercih/programs", data);
+  return res.data;
+}
+
+export async function updateAdminTercihProgram(id, data) {
+  const res = await api.put(`/admin/tercih/programs/${id}`, data);
+  return res.data;
+}
+
+export async function deleteAdminTercihProgram(id) {
+  const res = await api.delete(`/admin/tercih/programs/${id}`);
+  return res.data;
+}
+
+export async function bulkImportAdminTercih(programs) {
+  const res = await api.post("/admin/tercih/bulk-import", { programs });
+  return res.data;
+}
+
 
 // ============ PLACEMENT TEST ============
 export async function createPlacementTest(examId) {
@@ -356,6 +424,47 @@ export async function createSubtopic(topicId, name, order = 0) {
   return res.data;
 }
 
+export async function updateExam(examId, payload) {
+  const res = await api.put(`/admin/exams/${examId}`, payload);
+  return res.data;
+}
+
+export async function deleteExam(examId) {
+  const res = await api.delete(`/admin/exams/${examId}`);
+  return res.data;
+}
+
+export async function updateSubject(subjectId, payload) {
+  const res = await api.put(`/admin/subjects/${subjectId}`, payload);
+  return res.data;
+}
+
+export async function deleteSubject(subjectId) {
+  const res = await api.delete(`/admin/subjects/${subjectId}`);
+  return res.data;
+}
+
+export async function updateTopic(topicId, payload) {
+  const res = await api.put(`/admin/topics/${topicId}`, payload);
+  return res.data;
+}
+
+export async function deleteTopic(topicId) {
+  const res = await api.delete(`/admin/topics/${topicId}`);
+  return res.data;
+}
+
+export async function updateSubtopic(subtopicId, payload) {
+  const res = await api.put(`/admin/subtopics/${subtopicId}`, payload);
+  return res.data;
+}
+
+export async function deleteSubtopic(subtopicId) {
+  const res = await api.delete(`/admin/subtopics/${subtopicId}`);
+  return res.data;
+}
+
+
 export async function createTest(examId, name, description, durationMinutes, difficulty, questionIds) {
   const res = await api.post("/admin/tests", {
     exam_id: examId,
@@ -378,8 +487,138 @@ export async function createNote(note) {
   return res.data;
 }
 
+export async function uploadFile(file) {
+  const formData = new FormData();
+  formData.append("file", file);
+  const res = await api.post("/admin/upload", formData, {
+    headers: { "Content-Type": "multipart/form-data" },
+  });
+  return res.data;
+}
+
 export async function saveExamScoring(examId, config) {
   const res = await api.put(`/admin/exams/${examId}/scoring`, config);
+  return res.data;
+}
+
+export async function fetchAdminQuestions(filters = {}) {
+  const res = await api.get("/admin/questions", { params: filters });
+  return res.data;
+}
+
+export async function bulkCreateQuestions(payload) {
+  const res = await api.post("/admin/questions/bulk", payload);
+  return res.data;
+}
+
+export async function deleteQuestion(questionId) {
+  const res = await api.delete(`/admin/questions/${questionId}`);
+  return res.data;
+}
+
+export async function autoGenerateTest(payload) {
+  const res = await api.post("/admin/tests/auto-generate", payload);
+  return res.data;
+}
+
+export async function recordNoteActivity(noteId, secondsSpent) {
+  const res = await api.post("/user/note-activity", {
+    note_id: noteId,
+    seconds_spent: secondsSpent,
+  });
+  return res.data;
+}
+
+export async function fetchUserActivitySummary() {
+  const res = await api.get("/user/activity-summary");
+  return res.data;
+}
+
+export async function fetchAdminUsers(params = {}) {
+  const res = await api.get("/admin/users", { params });
+  return res.data;
+}
+
+export async function updateUserPlan(userId, planData) {
+  const res = await api.put(`/admin/users/${userId}/plan`, planData);
+  return res.data;
+}
+
+export async function analyzeExamPerformanceAI(payload) {
+  const res = await api.post("/ai/analyze-test-performance", payload);
+  return res.data;
+}
+
+export async function extractQuestionsFromPDF(file, examId) {
+  const formData = new FormData();
+  formData.append("file", file);
+  formData.append("exam_id", examId);
+  const res = await api.post("/admin/questions/extract-pdf", formData, {
+    headers: { "Content-Type": "multipart/form-data" },
+  });
+  return res.data;
+}
+
+export async function bulkImportCategorizedQuestions(payload) {
+  const res = await api.post("/admin/questions/bulk-import-categorized", payload);
+  return res.data;
+}
+
+
+// ============ KREDİ SİSTEMİ ============
+export async function fetchCreditBalance() {
+  const res = await api.get("/credits/balance");
+  return res.data; // { balance: number }
+}
+
+export async function fetchCreditHistory() {
+  const res = await api.get("/credits/history");
+  return res.data;
+}
+
+export async function fetchCreditPackages() {
+  const res = await api.get("/credits/packages");
+  return res.data;
+}
+
+export async function purchaseCredits(packageId) {
+  const res = await api.post("/credits/purchase", { package_id: packageId });
+  return res.data;
+}
+
+export async function adminGrantCredits(userId, amount, description) {
+  const res = await api.post("/admin/credits/grant", { user_id: userId, amount, description });
+  return res.data;
+}
+
+export async function startTopicQuiz(topicId, count = 20) {
+  const res = await api.post(`/topics/${topicId}/start-quiz?count=${count}`);
+  return res.data;
+}
+
+export async function generateQuestionsWithAI(payload) {
+  const res = await api.post("/admin/questions/ai-generate", payload);
+  return res.data;
+}
+
+// ============ AI BÖLÜM & MESLEK REHBERİ SEO MAKALE FABRİKASI ============
+export async function fetchDepartmentCatalog() {
+  const res = await api.get("/admin/blog/department-catalog");
+  return res.data;
+}
+
+export async function startDepartmentArticlesGen(payload) {
+  const res = await api.post("/admin/blog/generate-department-articles", payload);
+  return res.data;
+}
+
+export async function fetchDepartmentArticlesStatus() {
+  const res = await api.get("/admin/blog/generate-department-articles/status");
+  return res.data;
+}
+
+export async function cancelDepartmentArticlesGen() {
+  const res = await api.delete("/admin/blog/generate-department-articles/cancel");
   return res.data;
 }
 

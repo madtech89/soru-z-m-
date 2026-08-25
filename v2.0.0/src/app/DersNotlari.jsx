@@ -1,50 +1,125 @@
 import { useEffect, useState } from "react";
-import { useSearchParams } from "react-router-dom";
+import { useSearchParams, useNavigate } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
-import { BookOpen, PlayCircle, FileText, X } from "lucide-react";
-import { fetchExams, fetchSubjects, fetchStudyNotes } from "@/lib/api";
+import { BookOpen, PlayCircle, FileText, X, Sparkles, Loader2, Target } from "lucide-react";
+import { fetchExams, fetchSubjects, fetchStudyNotes, recordNoteActivity, startTopicQuiz } from "@/lib/api";
 import { PageHeader, Card, Spinner, Empty, EASE } from "@/app/ui";
 import { tone } from "@/lib/subjects";
+import { MarkdownRenderer } from "@/app/NoteStudio";
+import { toast } from "sonner";
 
 function NoteModal({ note, subjSlug, onClose }) {
   const t = tone(subjSlug);
+  const navigate = useNavigate();
+  const [seconds, setSeconds] = useState(0);
+  const [startingQuiz, setStartingQuiz] = useState(false);
+
+  useEffect(() => {
+    const startTime = Date.now();
+    const timer = setInterval(() => {
+      setSeconds(Math.floor((Date.now() - startTime) / 1000));
+    }, 1000);
+
+    return () => {
+      clearInterval(timer);
+      const totalElapsed = Math.floor((Date.now() - startTime) / 1000);
+      if (totalElapsed >= 3 && note?.id) {
+        recordNoteActivity(note.id, totalElapsed).catch(() => {});
+      }
+    };
+  }, [note?.id]);
+
+  const handleStartQuiz = async () => {
+    if (!note?.topic_id) {
+      toast.error("Bu ders notuna bağlı bir konu bulunamadı.");
+      return;
+    }
+    setStartingQuiz(true);
+    try {
+      const res = await startTopicQuiz(note.topic_id, 20);
+      toast.success("🎯 20 soruluk pekiştirme testi hazırlandı!");
+      onClose();
+      navigate(`/app/deneme/${res.test_id}`);
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || "Test başlatılamadı, lütfen daha sonra deneyin.");
+    } finally {
+      setStartingQuiz(false);
+    }
+  };
+
+  const mins = Math.floor(seconds / 60);
+  const secs = seconds % 60;
+
   return (
     <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={onClose}
-      className="fixed inset-0 z-50 bg-black/50 grid place-items-end sm:place-items-center p-0 sm:p-6">
+      className="fixed inset-0 z-50 bg-black/50 grid place-items-end sm:place-items-center p-0 sm:p-6 backdrop-blur-sm">
       <motion.div initial={{ y: 40, opacity: 0 }} animate={{ y: 0, opacity: 1 }} exit={{ y: 40, opacity: 0 }}
         onClick={(e) => e.stopPropagation()} data-testid="note-modal"
-        className="bg-white rounded-t-3xl sm:rounded-3xl w-full sm:max-w-2xl max-h-[85vh] overflow-auto">
-        <div className="sticky top-0 glass border-b border-zinc-200 px-6 py-4 flex items-center justify-between">
-          <h3 className="font-heading font-bold text-lg pr-4">{note.title}</h3>
-          <button onClick={onClose} data-testid="note-close"><X size={20} className="text-zinc-400" /></button>
+        className="bg-white rounded-t-3xl sm:rounded-3xl w-full sm:max-w-3xl max-h-[85vh] overflow-auto shadow-2xl flex flex-col">
+        <div className="sticky top-0 glass border-b border-zinc-200 px-6 py-4 flex items-center justify-between z-10">
+          <div>
+            <h3 className="font-heading font-extrabold text-xl text-ink pr-4">{note.title}</h3>
+            <span className="text-xs font-bold text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-200">
+              ⏱️ Çalışma Süresi: {mins > 0 ? `${mins} dk ` : ""}{secs} sn
+            </span>
+          </div>
+          <button onClick={onClose} data-testid="note-close"><X size={20} className="text-zinc-400 hover:text-ink" /></button>
         </div>
-        <div className="p-6">
-          <p className="text-zinc-500 mb-5">{note.description}</p>
+
+        <div className="p-6 sm:p-8 space-y-5 flex-1">
+          {note.description && <p className="text-zinc-500 italic text-sm">{note.description}</p>}
           {note.video_url && (
-            <div className="rounded-2xl overflow-hidden mb-5 border border-zinc-200" style={{ aspectRatio: "16/9" }}>
+            <div className="rounded-2xl overflow-hidden shadow-sm border border-zinc-200" style={{ aspectRatio: "16/9" }}>
               <iframe src={note.video_url} title="video" className="w-full h-full" allowFullScreen />
             </div>
           )}
           {note.file_path && (
             <a href={note.file_path} target="_blank" rel="noreferrer" data-testid="note-file"
-              className="inline-flex items-center gap-2 mb-5 px-4 py-2 rounded-xl font-medium text-white" style={{ background: t.hex }}>
-              <FileText size={16} /> {note.file_name || "Dokümanı aç"}
+              className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl font-bold text-sm text-white shadow-sm hover:opacity-90 transition" style={{ background: t.hex }}>
+              <FileText size={18} /> {note.file_name || "Ders Dokümanını İndir / Aç"}
             </a>
           )}
-          <div className="space-y-2 text-zinc-700 leading-relaxed text-[15px]">
-            {note.content.split("\n").filter((l) => l.trim()).map((line, i) => {
-              const s = line.trim();
-              if (s.startsWith("## ")) return <h4 key={i} className="font-heading font-bold text-base pt-2">{s.slice(3)}</h4>;
-              if (s.startsWith("# ")) return <h3 key={i} className="font-heading font-bold text-lg pt-2">{s.slice(2)}</h3>;
-              if (s.startsWith("- ")) return <li key={i} className="ml-5 list-disc">{s.slice(2)}</li>;
-              return <p key={i}>{s}</p>;
-            })}
+          <div className="pt-2 border-t border-zinc-100">
+            <MarkdownRenderer content={note.content} />
+          </div>
+
+          {/* Konuyu Bitirdim -> 20 Soruluk Test Çöz CTA Kartı */}
+          <div className="pt-6 border-t border-zinc-200">
+            <div className="p-5 sm:p-6 rounded-2xl bg-gradient-to-br from-indigo-50 via-purple-50 to-pink-50 border border-indigo-100 text-center space-y-3">
+              <div className="inline-flex items-center justify-center h-12 w-12 rounded-2xl bg-indigo-600 text-white shadow-lg shadow-indigo-200">
+                <Sparkles size={22} />
+              </div>
+              <div>
+                <h4 className="font-heading font-extrabold text-lg text-ink">Konuyu Bitirdin mi? Şimdi Bilgini Sına!</h4>
+                <p className="text-xs sm:text-sm text-zinc-600 max-w-md mx-auto mt-1">
+                  Bu konunun soru havuzundan senin için <strong>rastgele 20 soru</strong> seçip deneme oluşturalım. Çözdüğün her testte gelişim yüzden kaydedilir!
+                </p>
+              </div>
+              <button
+                onClick={handleStartQuiz}
+                disabled={startingQuiz}
+                className="inline-flex items-center justify-center gap-2 px-8 py-3.5 rounded-2xl font-heading font-extrabold text-sm sm:text-base text-white bg-gradient-to-r from-indigo-600 via-purple-600 to-pink-600 hover:opacity-95 shadow-xl shadow-indigo-300/40 hover:scale-[1.02] active:scale-[0.98] transition-all disabled:opacity-50"
+              >
+                {startingQuiz ? (
+                  <>
+                    <Loader2 size={18} className="animate-spin" />
+                    Test Hazırlanıyor...
+                  </>
+                ) : (
+                  <>
+                    🎯 20 Soruluk Pekiştirme Testini Başlat →
+                  </>
+                )}
+              </button>
+            </div>
           </div>
         </div>
       </motion.div>
     </motion.div>
   );
 }
+
+
 
 export default function DersNotlari() {
   const [params] = useSearchParams();

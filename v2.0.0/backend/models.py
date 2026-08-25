@@ -23,6 +23,9 @@ class User(Base):
     daily_goal = Column(Integer, default=20)
     xp = Column(Integer, default=0)
     streak = Column(Integer, default=0)
+    plan = Column(String(50), default="free")
+    plan_expires_at = Column(String(50), nullable=True)
+    ai_credits = Column(Integer, default=100)
     created_at = Column(String(50), nullable=False)
     updated_at = Column(String(50), nullable=True)
 
@@ -46,8 +49,61 @@ class User(Base):
             "daily_goal": self.daily_goal or 20,
             "xp": self.xp or 0,
             "streak": self.streak or 0,
+            "plan": self.plan or "free",
+            "plan_expires_at": self.plan_expires_at,
+            "ai_credits": self.ai_credits if self.ai_credits is not None else 100,
             "created_at": self.created_at,
             "updated_at": self.updated_at,
+        }
+
+
+
+class CreditTransaction(Base):
+    """Kredi hareketleri: kullanım ve satın alma"""
+    __tablename__ = "credit_transactions"
+
+    id = Column(String(36), primary_key=True)
+    user_id = Column(String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    amount = Column(Integer, nullable=False)          # pozitif = ekleme, negatif = kullanım
+    type = Column(String(50), nullable=False)         # "welcome_bonus" | "ai_snap" | "ai_chat" | "ai_flashcard" | "purchase" | "admin_grant"
+    description = Column(String(255), nullable=True)
+    balance_after = Column(Integer, nullable=False)
+    created_at = Column(String(50), nullable=False)
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "user_id": self.user_id,
+            "amount": self.amount,
+            "type": self.type,
+            "description": self.description,
+            "balance_after": self.balance_after,
+            "created_at": self.created_at,
+        }
+
+
+class ApiKey(Base):
+    """Admin tarafından yönetilen AI API anahtarları"""
+    __tablename__ = "api_keys"
+
+    id = Column(String(36), primary_key=True)
+    provider = Column(String(50), nullable=False, index=True)  # gemini, openai, deepseek, groq, anthropic
+    name = Column(String(100), nullable=False)          # kullanıcı dostu etiket
+    key_value = Column(String(500), nullable=False)     # gerçek key (production'da şifreli saklanmalı)
+    masked_key = Column(String(100), nullable=False)    # UI'da gösterilecek
+    is_active = Column(Boolean, default=True)
+    priority = Column(Integer, default=1)               # düşük = önce dene
+    created_at = Column(String(50), nullable=False)
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "provider": self.provider,
+            "name": self.name,
+            "masked_key": self.masked_key,
+            "is_active": self.is_active,
+            "priority": self.priority,
+            "created_at": self.created_at,
         }
 
 
@@ -62,6 +118,7 @@ class Exam(Base):
     status = Column(String(50), default="active")
     order = Column(Integer, default=0)
     scoring_config = Column(JSON, nullable=True)
+    exam_date = Column(String(50), nullable=True)
     created_at = Column(String(50), nullable=False)
 
     def to_dict(self):
@@ -73,6 +130,7 @@ class Exam(Base):
             "category": self.category or "universite",
             "status": self.status or "active",
             "order": self.order or 0,
+            "exam_date": self.exam_date,
             "created_at": self.created_at,
         }
         if self.scoring_config:
@@ -368,7 +426,28 @@ class StudyNote(Base):
         }
 
 
+class UserNoteActivity(Base):
+    __tablename__ = "user_note_activities"
+
+    id = Column(String(36), primary_key=True)
+    user_id = Column(String(36), ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False)
+    note_id = Column(String(36), ForeignKey("study_notes.id", ondelete="CASCADE"), index=True, nullable=False)
+    seconds_spent = Column(Integer, default=0)
+    last_studied_at = Column(String(50), nullable=False)
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "user_id": self.user_id,
+            "note_id": self.note_id,
+            "seconds_spent": self.seconds_spent or 0,
+            "minutes_spent": round((self.seconds_spent or 0) / 60, 1),
+            "last_studied_at": self.last_studied_at,
+        }
+
+
 class AIRecommendation(Base):
+
     __tablename__ = "ai_recommendations"
 
     id = Column(String(36), primary_key=True)
@@ -557,3 +636,40 @@ class PasswordResetToken(Base):
     token = Column(String(255), index=True, nullable=False)
     expires_at = Column(String(50), nullable=False)
     created_at = Column(String(50), nullable=False)
+
+
+class BlogPost(Base):
+    """SEO uyumlu manuel ve otomatik blog yazıları"""
+    __tablename__ = "blog_posts"
+
+    id = Column(String(36), primary_key=True)
+    title = Column(String(255), nullable=False)
+    slug = Column(String(255), unique=True, index=True, nullable=False)
+    summary = Column(Text, default="")
+    content = Column(Text, default="")
+    image_url = Column(String(500), nullable=True)
+    category = Column(String(100), default="Genel") # Gündem, Sınav Rehberi, Eğitim, Haberler
+    seo_keywords = Column(String(500), default="")
+    author = Column(String(150), default="HedefMatik AI")
+    status = Column(String(50), default="published") # published, draft
+    views = Column(Integer, default=0)
+    created_at = Column(String(50), index=True, nullable=False)
+    updated_at = Column(String(50), nullable=True)
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "title": self.title,
+            "slug": self.slug,
+            "summary": self.summary or "",
+            "content": self.content or "",
+            "image_url": self.image_url,
+            "category": self.category,
+            "seo_keywords": self.seo_keywords,
+            "author": self.author,
+            "status": self.status,
+            "views": self.views or 0,
+            "created_at": self.created_at,
+            "updated_at": self.updated_at,
+        }
+

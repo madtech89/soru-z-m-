@@ -23,7 +23,7 @@ export default function ExamPlayer() {
   const [submitting, setSubmitting] = useState(false);
   const [showList, setShowList] = useState(false);
   const timeRef = useRef({});
-  const lsKey = `netor_session_${testId}`;
+  const lsKey = `hedefmatik_session_${testId}`;
 
   useEffect(() => {
     if (!user?.id) return;
@@ -31,7 +31,7 @@ export default function ExamPlayer() {
     (async () => {
       const t = await fetchTest(testId);
       if (!mounted) return;
-      const saved = JSON.parse(localStorage.getItem(lsKey) || "null");
+      const saved = JSON.parse(localStorage.getItem(lsKey) || localStorage.getItem(`netor_session_${testId}`) || "null");
       if (saved && saved.sessionId) {
         setSessionId(saved.sessionId);
         setAnswers(saved.answers || {});

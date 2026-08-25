@@ -1,132 +1,380 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   Compass, Loader2, Search, TrendingUp, Target, ArrowRight, ArrowLeft,
   MapPin, Clock, Award, Info, GraduationCap, Check, Building2, Filter,
+  Sparkles, Star, Trash2, Download, Printer, CheckCircle2, ChevronDown,
+  Percent, ArrowUpDown, SlidersHorizontal, Share2, BookOpen, X, School
 } from "lucide-react";
 import {
   fetchProgramRecommendations, fetchDistinctCities, fetchDistinctUniversities,
-  SCORE_TYPES, EXAM_TYPES,
+  fetchDistinctDepartments, SCORE_TYPES, TERCIH_EXAM_TYPES,
 } from "@/lib/api";
 import { PageHeader, Card, EASE } from "@/app/ui";
+import { toast } from "sonner";
 
-const inputCls = "w-full rounded-xl border border-zinc-300 bg-white px-4 py-3 outline-none focus:border-subject-matematik focus:ring-2 focus:ring-subject-matematik/20 transition text-lg font-semibold";
-const chipCls = "shrink-0 px-4 py-2 rounded-full text-sm font-medium border transition-colors";
+// TÜM 81 İL (A'dan Z'ye Eksiksiz Liste)
+export const ALL_81_CITIES = [
+  "Adana", "Adıyaman", "Afyonkarahisar", "Ağrı", "Amasya", "Ankara", "Antalya", "Artvin", "Aydın", "Balıkesir",
+  "Bilecik", "Bingöl", "Bitlis", "Bolu", "Burdur", "Bursa", "Çanakkale", "Çankırı", "Çorum", "Denizli",
+  "Diyarbakır", "Edirne", "Elazığ", "Erzincan", "Erzurum", "Eskişehir", "Gaziantep", "Giresun", "Gümüşhane", "Hakkari",
+  "Hatay", "Isparta", "Mersin", "İstanbul", "İzmir", "Kars", "Kastamonu", "Kayseri", "Kırklareli", "Kırşehir",
+  "Kocaeli", "Konya", "Kütahya", "Malatya", "Manisa", "Kahramanmaraş", "Mardin", "Muğla", "Muş", "Nevşehir",
+  "Niğde", "Ordu", "Rize", "Sakarya", "Samsun", "Siirt", "Sinop", "Sivas", "Tekirdağ", "Tokat",
+  "Trabzon", "Tunceli", "Şanlıurfa", "Uşak", "Van", "Yozgat", "Zonguldak", "Aksaray", "Bayburt", "Karaman",
+  "Kırıkkale", "Batman", "Şırnak", "Bartın", "Ardahan", "Iğdır", "Yalova", "Karabük", "Kilis", "Osmaniye", "Düzce"
+];
+
+// KAPSAMLI BÖLÜM VE ALAN LİSTESİ
+export const MASTER_DEPARTMENTS = [
+  // Sayısal
+  "Tıp", "Diş Hekimliği", "Eczacılık", "Bilgisayar Mühendisliği", "Yazılım Mühendisliği",
+  "Yapay Zeka ve Veri Mühendisliği", "Elektrik-Elektronik Mühendisliği", "Endüstri Mühendisliği",
+  "Makine Mühendisliği", "Havacılık ve Uzay Mühendisliği", "İnşaat Mühendisliği", "Mekatronik Mühendisliği",
+  "Kimya Mühendisliği", "Biyomühendislik", "Mimarlık", "Moleküler Biyoloji ve Genetik", "Hemşirelik",
+  "Beslenme ve Diyetetik", "Fizyoterapi ve Rehabilitasyon", "Ebelik", "Veterinerlik",
+  "İlköğretim Matematik Öğretmenliği", "Fen Bilgisi Öğretmenliği", "Bilişim Sistemleri Mühendisliği",
+  // Eşit Ağırlık
+  "Hukuk", "Psikoloji", "Yönetim Bilişim Sistemleri (YBS)", "İşletme", "İktisat",
+  "Siyaset Bilimi ve Uluslararası İlişkiler", "Kamu Yönetimi", "Rehberlik ve Psikolojik Danışmanlık (PDR)",
+  "Sınıf Öğretmenliği", "Uluslararası Ticaret ve Lojistik", "Maliye", "İç Mimarlık ve Çevre Tasarımı",
+  "Çocuk Gelişimi", "Sosyal Hizmet", "Ekonometri", "Sosyoloji", "Sağlık Yönetimi",
+  // Sözel
+  "Özel Eğitim Öğretmenliği", "Türkçe Öğretmenliği", "Sosyal Bilgiler Öğretmenliği",
+  "Türk Dili ve Edebiyatı", "Tarih", "İlahiyat", "İslami İlimler", "Halkla İlişkiler ve Tanıtım",
+  "Radyo, Televizyon ve Sinema", "Yeni Medya ve İletişim", "Gastronomi ve Mutfak Sanatları",
+  "Çizgi Film ve Animasyon", "Gazetecilik", "Coğrafya", "Görsel İletişim Tasarımı",
+  // Dil
+  "İngilizce Öğretmenliği", "Mütercim ve Tercümanlık (İngilizce)", "İngiliz Dili ve Edebiyatı",
+  "Almanca Öğretmenliği", "Mütercim ve Tercümanlık (Almanca)", "Fransız Dili ve Edebiyatı",
+  "Arapça Öğretmenliği", "Rus Dili ve Edebiyatı", "Amerikan Kültürü ve Edebiyatı",
+  // TYT Önlisans (2 Yıllık)
+  "İlk ve Acil Yardım (Paramedik)", "Anestezi", "Tıbbi Görüntüleme Teknikleri", "Tıbbi Laboratuvar Teknikleri",
+  "Ağız ve Diş Sağlığı", "Optisyenlik", "Fizyoterapi (Önlisans)", "Bilgisayar Programcılığı",
+  "Bilişim Güvenliği Teknolojisi", "Web Tasarımı ve Kodlama", "Siber Güvenlik", "Mekatronik (Önlisans)",
+  "Elektrik (Önlisans)", "Uçak Teknolojisi", "Sivil Havacılık Kabin Hizmetleri", "Aşçılık", "Grafik Tasarımı (Önlisans)",
+  "Adalet", "Lojistik", "Dış Ticaret", "Çocuk Gelişimi (Önlisans)"
+];
+
+export function normalizeTurkish(text) {
+  if (!text) return "";
+  return text
+    .toLocaleLowerCase("tr-TR")
+    .replace(/i̇/g, "i")
+    .replace(/ı/g, "i")
+    .replace(/ğ/g, "g")
+    .replace(/ü/g, "u")
+    .replace(/ş/g, "s")
+    .replace(/ö/g, "o")
+    .replace(/ç/g, "c")
+    .trim();
+}
+
+export function matchTurkish(source, query) {
+  if (!query) return true;
+  if (!source) return false;
+  return normalizeTurkish(source).includes(normalizeTurkish(query));
+}
+
+const inputCls = "w-full rounded-2xl border border-zinc-200 bg-white px-4 py-3.5 outline-none focus:border-violet-600 focus:ring-2 focus:ring-violet-600/20 transition text-sm font-semibold shadow-sm";
 
 function StepDots({ step, total }) {
   return (
     <div className="flex items-center gap-2 mb-8">
       {Array.from({ length: total }).map((_, i) => (
         <div key={i} className="flex items-center gap-2">
-          <div className={`h-8 w-8 rounded-full grid place-items-center text-sm font-bold transition-colors ${i < step ? "bg-subject-matematik text-white" : i === step ? "bg-ink text-white" : "bg-zinc-100 text-zinc-400"}`}>
+          <div className={`h-8 w-8 rounded-full grid place-items-center text-xs font-black transition-colors ${i < step ? "bg-violet-600 text-white" : i === step ? "bg-ink text-white shadow-md shadow-ink/20" : "bg-zinc-100 text-zinc-400"}`}>
             {i < step ? <Check size={14} /> : i + 1}
           </div>
-          {i < total - 1 && <div className={`h-0.5 w-8 ${i < step ? "bg-subject-matematik" : "bg-zinc-200"}`} />}
+          {i < total - 1 && <div className={`h-0.5 w-8 sm:w-12 rounded-full ${i < step ? "bg-violet-600" : "bg-zinc-200"}`} />}
         </div>
       ))}
     </div>
   );
 }
 
-function ProgramRow({ program, index, category }) {
-  const colors = {
-    guaranteed: { bg: "bg-emerald-50", border: "border-emerald-200", text: "text-emerald-700", label: "Yerleşir", icon: Target },
-    likely: { bg: "bg-amber-50", border: "border-amber-200", text: "text-amber-700", label: "Muhtemel", icon: TrendingUp },
-    reach: { bg: "bg-rose-50", border: "border-rose-200", text: "text-rose-700", label: "Ulaşılabilir", icon: Compass },
+function ProgramCard({ program, index, onToggleBasket, isInBasket, userRank }) {
+  const cat = program.recommendation_category || "likely";
+  const prob = program.probability || 50;
+
+  const config = {
+    guaranteed: {
+      bg: "bg-emerald-500/5",
+      border: "border-emerald-200",
+      badgeBg: "bg-emerald-100 text-emerald-800 border-emerald-300",
+      text: "text-emerald-700",
+      label: "Çok Yüksek / Güvenli",
+      icon: Target,
+    },
+    likely: {
+      bg: "bg-violet-500/5",
+      border: "border-violet-200",
+      badgeBg: "bg-violet-100 text-violet-800 border-violet-300",
+      text: "text-violet-700",
+      label: "Yüksek İhtimal / İdeal",
+      icon: TrendingUp,
+    },
+    reach: {
+      bg: "bg-amber-500/5",
+      border: "border-amber-200",
+      badgeBg: "bg-amber-100 text-amber-800 border-amber-300",
+      text: "text-amber-700",
+      label: "Dengeli / Sürpriz",
+      icon: Compass,
+    },
+    dream: {
+      bg: "bg-rose-500/5",
+      border: "border-rose-200",
+      badgeBg: "bg-rose-100 text-rose-800 border-rose-300",
+      text: "text-rose-700",
+      label: "Riskli / Hayal",
+      icon: Sparkles,
+    },
+  }[cat] || {
+    bg: "bg-zinc-50",
+    border: "border-zinc-200",
+    badgeBg: "bg-zinc-100 text-zinc-800 border-zinc-300",
+    text: "text-zinc-700",
+    label: "Belirsiz",
+    icon: Compass,
   };
-  const c = colors[category];
-  const Icon = c.icon;
-  const trend = Number(program.score_2025) - Number(program.score_2023);
-  const trendStr = trend > 0 ? `+${trend.toFixed(1)}` : trend.toFixed(1);
-  const diff = (Number(program.score_2025) - (category === "guaranteed" ? Number(program.score_2025) : 0)).toFixed(1);
+
+  const Icon = config.icon;
 
   return (
     <motion.div
-      initial={{ opacity: 0, y: 10 }}
+      initial={{ opacity: 0, y: 12 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ delay: Math.min(index * 0.02, 0.3), duration: 0.3, ease: EASE }}
-      className={`rounded-xl border ${c.border} ${c.bg} p-4 flex flex-col sm:flex-row sm:items-center gap-3`}
+      className={`rounded-2xl border ${config.border} ${config.bg} p-5 hover:shadow-md transition-all relative overflow-hidden group bg-white`}
     >
-      <div className="flex-1 min-w-0">
-        <div className="flex items-center gap-2 mb-1 flex-wrap">
-          <span className={`text-xs font-bold ${c.text} ${c.bg} px-2 py-0.5 rounded-full border ${c.border} flex items-center gap-1`}>
-            <Icon size={11} /> {c.label}
-          </span>
-          {program.scholarship && (
-            <span className="text-xs font-bold text-subject-matematik bg-subject-matematik/10 px-2 py-0.5 rounded-full">{program.scholarship} Burs</span>
-          )}
+      <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+        {/* Sol Bilgiler */}
+        <div className="flex-1 min-w-0 space-y-1.5">
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className={`text-[11px] font-black px-2.5 py-0.5 rounded-full border ${config.badgeBg} flex items-center gap-1.5`}>
+              <Icon size={12} /> {config.label} (%{prob} Kazanma İhtimali)
+            </span>
+            <span className="text-[11px] font-bold px-2 py-0.5 rounded-md bg-zinc-100 text-zinc-600">
+              {program.score_type}
+            </span>
+            {program.scholarship && (
+              <span className="text-[11px] font-bold text-violet-700 bg-violet-50 px-2 py-0.5 rounded-md border border-violet-200">
+                {program.scholarship}
+              </span>
+            )}
+          </div>
+
+          <h3 className="font-heading font-black text-base text-ink leading-snug pt-0.5">
+            {program.program}
+          </h3>
+
+          <div className="text-xs font-semibold text-zinc-600 flex items-center gap-1.5">
+            <Building2 size={13} className="text-zinc-400 shrink-0" />
+            <span>{program.university}</span>
+            {program.faculty && <span className="text-zinc-400">· {program.faculty}</span>}
+          </div>
+
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-1 pt-1 text-xs text-zinc-500 font-medium">
+            <span className="flex items-center gap-1"><MapPin size={12} className="text-violet-600" /> {program.city}</span>
+            {program.duration_years > 0 && (
+              <span className="flex items-center gap-1"><Clock size={12} className="text-zinc-400" /> {program.duration_years} Yıl</span>
+            )}
+            {program.quota > 0 && <span className="flex items-center gap-1"><Award size={12} className="text-amber-500" /> Kontenjan: {program.quota}</span>}
+            
+            {userRank > 0 && program.rank_diff !== undefined && (
+              <span className={`font-bold ${program.rank_diff >= 0 ? "text-emerald-600" : "text-rose-500"}`}>
+                {program.rank_diff >= 0 ? `+${program.rank_diff.toLocaleString("tr-TR")} sıra avantaj` : `${program.rank_diff.toLocaleString("tr-TR")} sıra geride`}
+              </span>
+            )}
+          </div>
         </div>
-        <div className="font-heading font-bold text-sm leading-snug">{program.program}</div>
-        <div className="text-xs text-zinc-500 mt-0.5">{program.university} · {program.faculty}</div>
-        <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5 mt-1.5 text-xs text-zinc-400">
-          <span className="flex items-center gap-1"><MapPin size={11} /> {program.city}</span>
-          <span className="flex items-center gap-1"><Clock size={11} /> {program.duration_years} yıl</span>
-          {program.quota > 0 && <span className="flex items-center gap-1"><Award size={11} /> Kont: {program.quota}</span>}
-        </div>
-      </div>
-      <div className="flex sm:flex-col items-center sm:items-end gap-3 sm:gap-1 shrink-0">
-        <div className="text-right">
-          <div className="text-xs text-zinc-400">2025 Taban</div>
-          <div className="font-heading font-extrabold text-lg leading-none">{Number(program.score_2025).toFixed(2)}</div>
-        </div>
-        <div className={`text-xs font-medium ${trend > 0 ? "text-rose-500" : trend < 0 ? "text-emerald-500" : "text-zinc-400"}`}>
-          3 yıl: {trendStr}
-        </div>
-        <div className="text-right">
-          <div className="text-xs text-zinc-400">Başarı Sırası</div>
-          <div className="text-sm font-bold text-zinc-600">{program.rank_2025.toLocaleString("tr-TR")}</div>
+
+        {/* Sağ İstatistikler & Buton */}
+        <div className="flex items-center justify-between lg:justify-end gap-6 pt-3 lg:pt-0 border-t lg:border-t-0 border-zinc-100 shrink-0">
+          <div className="flex gap-4">
+            <div className="text-right">
+              <div className="text-[10px] uppercase tracking-wider font-bold text-zinc-400">Taban Puan</div>
+              <div className="font-heading font-black text-lg text-violet-700">
+                {Number(program.score_2025 || 0).toFixed(2)}
+              </div>
+            </div>
+
+            <div className="text-right pl-4 border-l border-zinc-200">
+              <div className="text-[10px] uppercase tracking-wider font-bold text-zinc-400">Başarı Sırası</div>
+              <div className="font-mono font-black text-sm text-ink">
+                {program.rank_2025 ? program.rank_2025.toLocaleString("tr-TR") : "—"}
+              </div>
+            </div>
+          </div>
+
+          <button
+            onClick={() => onToggleBasket(program)}
+            className={`p-2.5 rounded-xl border transition flex items-center justify-center gap-1.5 text-xs font-bold ${
+              isInBasket
+                ? "bg-amber-500 text-white border-amber-600 shadow-sm"
+                : "bg-zinc-50 text-zinc-600 border-zinc-200 hover:bg-zinc-100"
+            }`}
+            title={isInBasket ? "Sepetten Çıkar" : "Tercih Sepetime Ekle"}
+          >
+            <Star size={16} className={isInBasket ? "fill-white" : ""} />
+            <span className="hidden sm:inline">{isInBasket ? "Listemde" : "Listeme Ekle"}</span>
+          </button>
         </div>
       </div>
     </motion.div>
   );
 }
 
-function ProgramList({ title, programs, category, icon: Icon, color }) {
-  if (!programs || programs.length === 0) return null;
-  return (
-    <div>
-      <div className="flex items-center gap-2 mb-3">
-        <span className="h-7 w-7 rounded-lg grid place-items-center" style={{ background: `${color}18` }}>
-          <Icon size={14} style={{ color }} />
-        </span>
-        <h3 className="font-heading font-bold text-base">{title}</h3>
-        <span className="text-xs text-zinc-400">({programs.length} program)</span>
-      </div>
-      <div className="space-y-2.5">
-        {programs.map((p, i) => (
-          <ProgramRow key={p.id} program={p} index={i} category={category} />
-        ))}
-      </div>
-    </div>
-  );
-}
-
 export default function TercihRobotu() {
   const [step, setStep] = useState(0);
-  const [examType, setExamType] = useState("");
-  const [scoreType, setScoreType] = useState("");
+  const [examType, setExamType] = useState("YKS");
+  const [scoreType, setScoreType] = useState("SAY");
   const [score, setScore] = useState("");
-  const [cities, setCities] = useState([]);
+  const [rank, setRank] = useState("");
+
+  // Search & Filter states
   const [selectedCities, setSelectedCities] = useState([]);
-  const [universities, setUniversities] = useState([]);
-  const [selectedUnis, setSelectedUnis] = useState([]);
-  const [programKeyword, setProgramKeyword] = useState("");
+  const [citySearchInput, setCitySearchInput] = useState("");
+  const [isCityDropdownOpen, setIsCityDropdownOpen] = useState(false);
+
+  const [selectedDepts, setSelectedDepts] = useState([]);
+  const [deptSearchInput, setDeptSearchInput] = useState("");
+  const [isDeptDropdownOpen, setIsDeptDropdownOpen] = useState(false);
+
+  // Results state
   const [results, setResults] = useState(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
 
-  const TOTAL_STEPS = 4;
+  // Results Controls
+  const [sortBy, setSortBy] = useState("chance");
+  const [categoryFilter, setCategoryFilter] = useState("all");
+  const [resultSearch, setResultSearch] = useState("");
+
+  // Tercih Sepeti (Basket)
+  const [basket, setBasket] = useState(() => {
+    try {
+      const saved = localStorage.getItem("hedefmatik_tercih_basket") || localStorage.getItem("netor_tercih_basket");
+      return saved ? JSON.parse(saved) : [];
+    } catch {
+      return [];
+    }
+  });
+  const [isBasketModalOpen, setIsBasketModalOpen] = useState(false);
+
+  const cityInputRef = useRef(null);
+  const deptInputRef = useRef(null);
 
   useEffect(() => {
-    fetchDistinctCities().then(setCities).catch(() => setCities([]));
-    fetchDistinctUniversities().then(setUniversities).catch(() => setUniversities([]));
+    localStorage.setItem("hedefmatik_tercih_basket", JSON.stringify(basket));
+  }, [basket]);
+
+  // Click outside to close dropdowns
+  useEffect(() => {
+    function handleClickOutside(event) {
+      if (cityInputRef.current && !cityInputRef.current.contains(event.target)) {
+        setIsCityDropdownOpen(false);
+      }
+      if (deptInputRef.current && !deptInputRef.current.contains(event.target)) {
+        setIsDeptDropdownOpen(false);
+      }
+    }
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => {
+      document.removeEventListener("mousedown", handleClickOutside);
+    };
   }, []);
+
+  // Sınav türü değiştikçe uygun varsayılan puan türünü ayarla
+  const currentScoreTypes = useMemo(() => {
+    if (examType === "YKS") {
+      return [
+        { key: "SAY", label: "Sayısal (SAY)", desc: "Tıp, Mühendislik, Mimarlık, Sağlık" },
+        { key: "EA", label: "Eşit Ağırlık (EA)", desc: "Hukuk, Psikoloji, YBS, İşletme, PDR" },
+        { key: "SÖZ", label: "Sözel (SÖZ)", desc: "Özel Eğitim, Türkçe Öğrt., İlahiyat, Gastronomi" },
+        { key: "DİL", label: "Yabancı Dil (DİL)", desc: "İngilizce Öğretmenliği, Mütercim-Tercümanlık" },
+        { key: "TYT", label: "TYT (Önlisans 2 Yıllık)", desc: "İlk ve Acil Yardım, Anestezi, Bilgisayar Prog." },
+      ];
+    } else if (examType === "LGS") {
+      return [
+        { key: "LGS", label: "LGS Merkezi Sınav Puanı", desc: "Fen, Anadolu, Sosyal Bilimler ve Proje Liseleri" },
+      ];
+    } else if (examType === "KPSS") {
+      return [
+        { key: "KPSS-Lisans", label: "KPSS Lisans (P3 Puanı)", desc: "Merkezi Memur, Mühendis, Sağlıkçı Atamaları" },
+        { key: "KPSS-Onlisans", label: "KPSS Önlisans (P93 Puanı)", desc: "Paramedik, Tıbbi Sekreter, Zabıt Kâtibi Atamaları" },
+        { key: "KPSS-Egitim", label: "KPSS Öğretmenlik (ÖABT / P121)", desc: "Milli Eğitim Bakanlığı Öğretmen Atama Taban Puanları" },
+        { key: "KPSS-A", label: "KPSS Alan (A Grubu - P48/P23)", desc: "Gelir Uzman Yardımcılığı (GUY), SGK Denetmenliği" },
+      ];
+    } else if (examType === "DGS") {
+      return [
+        { key: "SAY", label: "DGS Sayısal", desc: "Mühendislik, Mimarlık ve Sağlık Lisans Tamamlama" },
+        { key: "EA", label: "DGS Eşit Ağırlık", desc: "Hukuk, İşletme, YBS ve İİBF Lisans Tamamlama" },
+        { key: "SÖZ", label: "DGS Sözel", desc: "İletişim, Gastronomi, İlahiyat Lisans Tamamlama" },
+      ];
+    }
+    return SCORE_TYPES;
+  }, [examType]);
+
+  useEffect(() => {
+    if (currentScoreTypes.length > 0) {
+      setScoreType(currentScoreTypes[0].key);
+    }
+  }, [currentScoreTypes]);
+
+  // Şehir Arama / Filtreleme Dropdown Listesi (Tüm 81 il arasından, Türkçe duyarsız)
+  const filteredCities = useMemo(() => {
+    if (!citySearchInput.trim()) return ALL_81_CITIES.slice(0, 15);
+    return ALL_81_CITIES.filter((c) => matchTurkish(c, citySearchInput));
+  }, [citySearchInput]);
+
+  // Bölüm Arama / Filtreleme Dropdown Listesi (Tüm ana bölümler arasından, Türkçe duyarsız)
+  const filteredDepts = useMemo(() => {
+    if (!deptSearchInput.trim()) return MASTER_DEPARTMENTS.slice(0, 15);
+    return MASTER_DEPARTMENTS.filter((d) => matchTurkish(d, deptSearchInput));
+  }, [deptSearchInput]);
+
 
   const toggleCity = (c) => {
     setSelectedCities((prev) => prev.includes(c) ? prev.filter((x) => x !== c) : [...prev, c]);
   };
-  const toggleUni = (u) => {
-    setSelectedUnis((prev) => prev.includes(u) ? prev.filter((x) => x !== u) : [...prev, u]);
+
+  const toggleDept = (d) => {
+    setSelectedDepts((prev) => prev.includes(d) ? prev.filter((x) => x !== d) : [...prev, d]);
+  };
+
+  const handleAddCustomCities = () => {
+    if (!citySearchInput.trim()) return;
+    const parts = citySearchInput.split(",").map(s => s.trim()).filter(Boolean);
+    setSelectedCities((prev) => Array.from(new Set([...prev, ...parts])));
+    setCitySearchInput("");
+    setIsCityDropdownOpen(false);
+  };
+
+  const handleAddCustomDepts = () => {
+    if (!deptSearchInput.trim()) return;
+    const parts = deptSearchInput.split(",").map(s => s.trim()).filter(Boolean);
+    setSelectedDepts((prev) => Array.from(new Set([...prev, ...parts])));
+    setDeptSearchInput("");
+    setIsDeptDropdownOpen(false);
+  };
+
+  const toggleBasket = (program) => {
+    setBasket((prev) => {
+      const exists = prev.some((p) => p.id === program.id);
+      if (exists) {
+        toast.success("Program tercih listenden çıkarıldı.");
+        return prev.filter((p) => p.id !== program.id);
+      } else {
+        if (prev.length >= 24) {
+          toast.error("ÖSYM kuralı gereği en fazla 24 tercih ekleyebilirsiniz!");
+          return prev;
+        }
+        toast.success("⭐ Program tercih listene eklendi!");
+        return [...prev, program];
+      }
+    });
   };
 
   const canNext = () => {
@@ -134,7 +382,8 @@ export default function TercihRobotu() {
     if (step === 1) return !!scoreType;
     if (step === 2) {
       const s = parseFloat(score.replace(",", "."));
-      return !!s && s >= 100 && s <= 600;
+      const r = parseInt(rank, 10);
+      return (s >= 50 && s <= 600) || (r > 0);
     }
     return true;
   };
@@ -142,107 +391,134 @@ export default function TercihRobotu() {
   const next = () => {
     if (step === 2) {
       const s = parseFloat(score.replace(",", "."));
-      if (!s || s < 100 || s > 600) {
-        setError("Lütfen 100-600 arası geçerli bir puan giriniz.");
+      const r = parseInt(rank, 10);
+      if ((!s || s < 50 || s > 600) && (!r || r <= 0)) {
+        setError("Lütfen geçerli bir yerleştirme puanı veya başarı sırası giriniz.");
         return;
       }
       setError("");
     }
-    if (step < TOTAL_STEPS - 1) {
+    if (step < 3) {
       setStep(step + 1);
     } else {
       compute();
     }
   };
 
-  const back = () => {
-    setError("");
-    if (step > 0) setStep(step - 1);
-  };
-
   const compute = async () => {
     const s = parseFloat(score.replace(",", "."));
-    if (!s || s < 100 || s > 600) {
-      setError("Lütfen 100-600 arası geçerli bir puan giriniz.");
-      setStep(2);
-      return;
-    }
+    const r = parseInt(rank, 10);
     setError("");
     setBusy(true);
     setResults(null);
+
     try {
-      const filters = {};
-      if (selectedCities.length > 0) filters.cities = selectedCities;
-      if (selectedUnis.length > 0) filters.universities = selectedUnis;
-      if (programKeyword.trim()) filters.programKeyword = programKeyword.trim();
-      const data = await fetchProgramRecommendations(scoreType, s, filters);
-      setResults({ ...data, userScore: s });
+      const filters = {
+        cities: selectedCities,
+        programs: selectedDepts,
+        sortBy,
+        categoryFilter
+      };
+
+      const data = await fetchProgramRecommendations(scoreType, s || 0, r || 0, filters);
+      setResults({ ...data, userScore: s, userRank: r });
     } catch (err) {
-      setError("Öneriler yüklenirken bir hata oluştu. Lütfen tekrar deneyin.");
+      setError("Öneriler hesaplanırken bir hata oluştu. Lütfen tekrar deneyin.");
     } finally {
       setBusy(false);
     }
   };
 
+  // Filtered & Sorted live items
+  const displayItems = useMemo(() => {
+    if (!results || !results.all) return [];
+    let list = [...results.all];
+
+    if (categoryFilter !== "all") {
+      list = list.filter((p) => p.recommendation_category === categoryFilter);
+    }
+
+    if (resultSearch.trim()) {
+      const terms = resultSearch.split(",").map(t => t.trim()).filter(Boolean);
+      list = list.filter((p) => {
+        const text = `${p.university} ${p.faculty} ${p.program} ${p.city}`;
+        return terms.some(term => matchTurkish(text, term));
+      });
+    }
+
+    if (sortBy === "chance") {
+      list.sort((a, b) => (b.probability || 0) - (a.probability || 0));
+    } else if (sortBy === "rank_asc") {
+      list.sort((a, b) => (a.rank_2025 || 999999) - (b.rank_2025 || 999999));
+    } else if (sortBy === "score_desc") {
+      list.sort((a, b) => (b.score_2025 || 0) - (a.score_2025 || 0));
+    } else if (sortBy === "quota_desc") {
+      list.sort((a, b) => (b.quota || 0) - (a.quota || 0));
+    }
+
+    return list;
+  }, [results, categoryFilter, resultSearch, sortBy]);
+
   const reset = () => {
     setStep(0);
-    setExamType("");
-    setScoreType("");
     setScore("");
+    setRank("");
     setSelectedCities([]);
-    setSelectedUnis([]);
-    setProgramKeyword("");
+    setSelectedDepts([]);
     setResults(null);
     setError("");
   };
 
-  const totalResults = results ? results.guaranteed.length + results.likely.length + results.reach.length : 0;
-  const examLabel = EXAM_TYPES.find((e) => e.key === examType)?.label || "";
-  const scoreTypeLabel = SCORE_TYPES.find((s) => s.key === scoreType)?.label || "";
-
   return (
-    <div>
-      <PageHeader
-        eyebrow="tercih robotu"
-        title="Tercih Robotu"
-        sub="Sınav türünü, puan türünü ve puanını gir; sana uygun üniversite bölümlerini görelim."
-      />
+    <div className="space-y-6">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+        <PageHeader
+          eyebrow="yök atlas & ösym"
+          title="Merkezi Akıllı Tercih Robotu"
+          sub="81 ildeki tüm üniversite bölümlerini, liseleri ve KPSS kadrolarını kazanma ihtimali sıralamasıyla listele."
+        />
+
+        {basket.length > 0 && (
+          <button
+            onClick={() => setIsBasketModalOpen(true)}
+            className="flex items-center gap-2 px-4 py-2.5 rounded-2xl bg-amber-500 text-white font-bold text-xs shadow-lg shadow-amber-500/20 hover:bg-amber-600 transition"
+          >
+            <Star size={16} className="fill-white" />
+            <span>Tercih Sepetim ({basket.length}/24)</span>
+          </button>
+        )}
+      </div>
 
       <AnimatePresence mode="wait">
         {!results ? (
-          <motion.div
-            key="wizard"
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-          >
-            <StepDots step={step} total={TOTAL_STEPS} />
+          <motion.div key="wizard" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
+            <StepDots step={step} total={4} />
 
             <div className="max-w-2xl">
               {/* Step 0: Exam Type */}
               {step === 0 && (
                 <motion.div initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} transition={{ duration: 0.3, ease: EASE }}>
-                  <Card className="p-6">
-                    <div className="flex items-center gap-2 mb-1">
-                      <GraduationCap size={18} className="text-subject-matematik" />
-                      <span className="text-sm font-medium text-zinc-500">Adım 1</span>
+                  <Card className="p-6 space-y-4">
+                    <div className="flex items-center gap-2 text-violet-600 font-bold text-xs">
+                      <GraduationCap size={16} /> Adım 1: Sınav Türü
                     </div>
-                    <h2 className="font-heading font-extrabold text-xl mb-1">Hangi sınav için tercih yapacaksın?</h2>
-                    <p className="text-sm text-zinc-500 mb-5">Sınav türünü seçerek başla.</p>
+                    <h2 className="font-heading font-extrabold text-xl text-ink">Hangi sınav için tercih yapacaksın?</h2>
                     <div className="space-y-3">
-                      {EXAM_TYPES.map((et) => {
+                      {TERCIH_EXAM_TYPES.map((et) => {
                         const on = examType === et.key;
                         return (
                           <button
                             key={et.key}
                             onClick={() => setExamType(et.key)}
-                            className={`w-full text-left rounded-2xl p-4 border-2 transition-all flex items-center justify-between ${on ? "border-subject-matematik bg-subject-matematik/5" : "border-zinc-200 bg-white hover:border-zinc-300"}`}
+                            className={`w-full text-left rounded-2xl p-4 border-2 transition-all flex items-center justify-between ${
+                              on ? "border-violet-600 bg-violet-50/50 shadow-sm" : "border-zinc-200 bg-white hover:border-zinc-300"
+                            }`}
                           >
                             <div>
-                              <div className="font-heading font-bold text-sm">{et.label}</div>
+                              <div className="font-heading font-bold text-sm text-ink">{et.label}</div>
                               <div className="text-xs text-zinc-500 mt-0.5">{et.desc}</div>
                             </div>
-                            {on && <span className="h-6 w-6 rounded-full bg-subject-matematik grid place-items-center"><Check size={14} className="text-white" /></span>}
+                            {on && <span className="h-6 w-6 rounded-full bg-violet-600 grid place-items-center text-white"><Check size={14} /></span>}
                           </button>
                         );
                       })}
@@ -254,27 +530,27 @@ export default function TercihRobotu() {
               {/* Step 1: Score Type */}
               {step === 1 && (
                 <motion.div initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} transition={{ duration: 0.3, ease: EASE }}>
-                  <Card className="p-6">
-                    <div className="flex items-center gap-2 mb-1">
-                      <Target size={18} className="text-subject-matematik" />
-                      <span className="text-sm font-medium text-zinc-500">Adım 2</span>
+                  <Card className="p-6 space-y-4">
+                    <div className="flex items-center gap-2 text-violet-600 font-bold text-xs">
+                      <Target size={16} /> Adım 2: Puan Türü
                     </div>
-                    <h2 className="font-heading font-extrabold text-xl mb-1">Puan türünü seç</h2>
-                    <p className="text-sm text-zinc-500 mb-5">{examLabel} puan türlerinden hangisini kullandın?</p>
+                    <h2 className="font-heading font-extrabold text-xl text-ink">Puan türünü seç</h2>
                     <div className="grid sm:grid-cols-2 gap-3">
-                      {SCORE_TYPES.map((st) => {
+                      {currentScoreTypes.map((st) => {
                         const on = scoreType === st.key;
                         return (
                           <button
                             key={st.key}
                             onClick={() => setScoreType(st.key)}
-                            className={`text-left rounded-2xl p-4 border-2 transition-all ${on ? "border-subject-matematik bg-subject-matematik/5" : "border-zinc-200 bg-white hover:border-zinc-300"}`}
+                            className={`text-left rounded-2xl p-4 border-2 transition-all ${
+                              on ? "border-violet-600 bg-violet-50/50 shadow-sm" : "border-zinc-200 bg-white hover:border-zinc-300"
+                            }`}
                           >
                             <div className="flex items-center justify-between mb-1">
-                              <span className="font-heading font-bold text-sm">{st.label}</span>
-                              {on && <span className="h-5 w-5 rounded-full bg-subject-matematik grid place-items-center"><Check size={12} className="text-white" /></span>}
+                              <span className="font-heading font-bold text-sm text-ink">{st.label}</span>
+                              {on && <span className="h-5 w-5 rounded-full bg-violet-600 grid place-items-center text-white"><Check size={12} /></span>}
                             </div>
-                            <p className="text-xs text-zinc-500 leading-relaxed">{st.desc}</p>
+                            <p className="text-xs text-zinc-500">{st.desc}</p>
                           </button>
                         );
                       })}
@@ -283,114 +559,368 @@ export default function TercihRobotu() {
                 </motion.div>
               )}
 
-              {/* Step 2: Score Input */}
+              {/* Step 2: Score & Rank */}
               {step === 2 && (
                 <motion.div initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} transition={{ duration: 0.3, ease: EASE }}>
-                  <Card className="p-6">
-                    <div className="flex items-center gap-2 mb-1">
-                      <Award size={18} className="text-subject-matematik" />
-                      <span className="text-sm font-medium text-zinc-500">Adım 3</span>
+                  <Card className="p-6 space-y-4">
+                    <div className="flex items-center gap-2 text-violet-600 font-bold text-xs">
+                      <Award size={16} /> Adım 3: Puan & Başarı Sıralaması
                     </div>
-                    <h2 className="font-heading font-extrabold text-xl mb-1">Yerleştirme puanını gir</h2>
-                    <p className="text-sm text-zinc-500 mb-5">{examLabel} · {scoreTypeLabel} puan türündeki yerleştirme puanını gir.</p>
-                    <input
-                      type="text"
-                      inputMode="decimal"
-                      placeholder="Örn: 425.50"
-                      value={score}
-                      onChange={(e) => { setScore(e.target.value); setError(""); }}
-                      className={inputCls}
-      data-testid="tercih-score-input"
-                      autoFocus
-                    />
-                    {error && <p className="text-xs text-rose-500 mt-2">{error}</p>}
-                    <div className="mt-4 flex items-start gap-2 text-xs text-zinc-400 leading-relaxed">
-                      <Info size={14} className="shrink-0 mt-0.5" />
-                      <span>ÖSYM sonuç belgendeki yerleştirme puanını gir. 100-600 arası olmalıdır.</span>
+                    <h2 className="font-heading font-extrabold text-xl text-ink">Sınav sonucunu gir</h2>
+                    <p className="text-xs text-zinc-500">
+                      Başarı sıranı veya puanını girerek en doğru kazanma olasılığı hesaplamasını başlat.
+                    </p>
+
+                    <div className="grid sm:grid-cols-2 gap-4 pt-2">
+                      <div>
+                        <label className="text-xs font-bold text-zinc-700 block mb-1">
+                          {examType === "LGS" ? "LGS Başarı Sırası / Yüzdelik Dilim" : "Merkezi Başarı Sıralaması *"}
+                        </label>
+                        <input
+                          type="number"
+                          placeholder="Örn: 24500"
+                          value={rank}
+                          onChange={(e) => { setRank(e.target.value); setError(""); }}
+                          className={inputCls}
+                          autoFocus
+                        />
+                      </div>
+
+                      <div>
+                        <label className="text-xs font-bold text-zinc-700 block mb-1">Yerleştirme Puanı (İsteğe bağlı)</label>
+                        <input
+                          type="text"
+                          inputMode="decimal"
+                          placeholder={examType === "LGS" ? "Örn: 485.50" : "Örn: 465.80"}
+                          value={score}
+                          onChange={(e) => { setScore(e.target.value); setError(""); }}
+                          className={inputCls}
+                        />
+                      </div>
                     </div>
+
+                    {error && <p className="text-xs text-rose-500 font-semibold">{error}</p>}
                   </Card>
                 </motion.div>
               )}
 
-              {/* Step 3: Filters */}
+              {/* Step 3: Multi-City & Multi-Department Filter */}
               {step === 3 && (
                 <motion.div initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} transition={{ duration: 0.3, ease: EASE }}>
-                  <Card className="p-6">
-                    <div className="flex items-center gap-2 mb-1">
-                      <Filter size={18} className="text-subject-matematik" />
-                      <span className="text-sm font-medium text-zinc-500">Adım 4</span>
+                  <Card className="p-6 space-y-5">
+                    <div className="flex items-center gap-2 text-violet-600 font-bold text-xs">
+                      <Filter size={16} /> Adım 4: 81 İl ve Bölüm Seçimi (Opsiyonel)
                     </div>
-                    <h2 className="font-heading font-extrabold text-xl mb-1">Tercihlerini belirt (opsiyonel)</h2>
-                    <p className="text-sm text-zinc-500 mb-5">Bölüm, şehir veya üniversite filtreleyebilirsin. Boş bırakırsan tüm uygun bölümler listelenir.</p>
+                    <h2 className="font-heading font-extrabold text-xl text-ink">Hedef şehir ve bölümlerini belirle</h2>
+                    <p className="text-xs text-zinc-500">
+                      Tüm 81 il veya bölümler arasından arayabilir, virgülle birden fazla ekleyebilir ya da boş bırakarak tüm uygun seçenekleri listeleyebilirsiniz.
+                    </p>
 
-                    {/* Program keyword */}
-                    <div className="mb-5">
-                      <label className="text-sm font-medium text-zinc-700 mb-2 block">Bölüm adında ara</label>
-                      <input
-                        type="text"
-                        placeholder="Örn: Bilgisayar, Hukuk, Tıp..."
-                        value={programKeyword}
-                        onChange={(e) => setProgramKeyword(e.target.value)}
-                        className="w-full rounded-xl border border-zinc-300 bg-white px-4 py-2.5 outline-none focus:border-subject-matematik focus:ring-2 focus:ring-subject-matematik/20 transition text-sm"
-                      />
-                    </div>
+                    {/* 81 İl Arama & Dropdown */}
+                    <div className="space-y-2 relative" ref={cityInputRef}>
+                      <label className="text-xs font-bold text-zinc-700 block flex items-center justify-between">
+                        <span>Şehir Filtresi ({selectedCities.length} seçili)</span>
+                        {selectedCities.length > 0 && (
+                          <button onClick={() => setSelectedCities([])} className="text-[11px] text-rose-500 font-bold hover:underline">
+                            Seçimleri Temizle
+                          </button>
+                        )}
+                      </label>
 
-                    {/* City filter */}
-                    {cities.length > 0 && (
-                      <div className="mb-5">
-                        <label className="text-sm font-medium text-zinc-700 mb-2 block flex items-center gap-1.5"><MapPin size={14} /> Şehir ({selectedCities.length} seçili)</label>
-                        <div className="flex flex-wrap gap-2 max-h-32 overflow-y-auto">
-                          {cities.map((c) => (
+                      <div className="flex gap-2">
+                        <div className="relative flex-1">
+                          <input
+                            value={citySearchInput}
+                            onChange={(e) => {
+                              setCitySearchInput(e.target.value);
+                              setIsCityDropdownOpen(true);
+                            }}
+                            onFocus={() => setIsCityDropdownOpen(true)}
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter") {
+                                e.preventDefault();
+                                handleAddCustomCities();
+                              }
+                            }}
+                            placeholder="81 il arasından arayın veya virgülle ayırın (Örn: İstanbul, Ankara, İzmir, Bursa, Trabzon)..."
+                            className="w-full text-xs rounded-xl border border-zinc-200 px-3 py-2.5 outline-none focus:border-violet-600 font-medium"
+                          />
+                        </div>
+                        <button
+                          type="button"
+                          onClick={handleAddCustomCities}
+                          className="px-4 py-2.5 rounded-xl bg-violet-600 text-white font-bold text-xs hover:bg-violet-700 transition"
+                        >
+                          Ekle
+                        </button>
+                      </div>
+
+                      {/* Dropdown Suggestions */}
+                      {isCityDropdownOpen && filteredCities.length > 0 && (
+                        <div className="absolute left-0 right-0 top-full mt-1 bg-white border border-zinc-200 rounded-2xl shadow-2xl z-30 max-h-60 overflow-y-auto p-2 divide-y divide-zinc-50">
+                          <div className="space-y-1">
+                            {filteredCities.map((c) => {
+                              const isSelected = selectedCities.includes(c);
+                              return (
+                                <button
+                                  key={c}
+                                  type="button"
+                                  onClick={() => toggleCity(c)}
+                                  className={`w-full text-left px-3 py-2 rounded-xl text-xs font-semibold flex items-center justify-between transition ${
+                                    isSelected ? "bg-violet-50 text-violet-700 font-bold" : "hover:bg-zinc-50 text-zinc-700"
+                                  }`}
+                                >
+                                  <div className="flex items-center gap-2">
+                                    <div className={`h-4 w-4 rounded border grid place-items-center ${isSelected ? "bg-violet-600 border-violet-600 text-white" : "border-zinc-300 bg-white"}`}>
+                                      {isSelected && <Check size={10} />}
+                                    </div>
+                                    <span>{c}</span>
+                                  </div>
+                                  <span className="text-[10px] text-zinc-400">81 İl</span>
+                                </button>
+                              );
+                            })}
+                          </div>
+
+                          {/* Sticky Dropdown Footer */}
+                          <div className="sticky bottom-0 bg-white pt-2 pb-1 px-2 border-t border-zinc-100 flex items-center justify-between mt-2">
+                            <span className="text-[11px] font-bold text-zinc-500">{selectedCities.length} şehir seçili</span>
                             <button
+                              type="button"
+                              onClick={() => {
+                                setIsCityDropdownOpen(false);
+                                setCitySearchInput("");
+                              }}
+                              className="px-3.5 py-1.5 bg-violet-600 text-white rounded-lg text-xs font-bold hover:bg-violet-700 shadow-sm transition"
+                            >
+                              ✓ Tamam / Kapat
+                            </button>
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Seçili Şehir Rozetleri */}
+                      {selectedCities.length > 0 && (
+                        <div className="flex flex-wrap gap-1.5 pt-1">
+                          {selectedCities.map((c) => (
+                            <span
                               key={c}
-                              onClick={() => toggleCity(c)}
-                              className={chipCls + (selectedCities.includes(c) ? " bg-subject-matematik text-white border-subject-matematik" : " border-zinc-300 text-zinc-600 hover:border-ink")}
+                              className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-violet-50 text-violet-800 text-xs font-bold border border-violet-200"
                             >
-                              {c}
-                            </button>
+                              <MapPin size={11} /> {c}
+                              <button onClick={() => toggleCity(c)} className="hover:text-rose-600">
+                                <X size={12} />
+                              </button>
+                            </span>
                           ))}
                         </div>
-                      </div>
-                    )}
+                      )}
+                    </div>
 
-                    {/* University filter */}
-                    {universities.length > 0 && (
-                      <div className="mb-2">
-                        <label className="text-sm font-medium text-zinc-700 mb-2 block flex items-center gap-1.5"><Building2 size={14} /> Üniversite ({selectedUnis.length} seçili)</label>
-                        <div className="flex flex-wrap gap-2 max-h-32 overflow-y-auto">
-                          {universities.map((u) => (
+                    {/* Bölüm Arama & Dropdown */}
+                    <div className="space-y-2 pt-3 border-t border-zinc-100 relative" ref={deptInputRef}>
+                      <label className="text-xs font-bold text-zinc-700 block flex items-center justify-between">
+                        <span>Bölüm / Program Filtresi ({selectedDepts.length} seçili)</span>
+                        {selectedDepts.length > 0 && (
+                          <button onClick={() => setSelectedDepts([])} className="text-[11px] text-rose-500 font-bold hover:underline">
+                            Seçimleri Temizle
+                          </button>
+                        )}
+                      </label>
+
+                      <div className="flex gap-2">
+                        <div className="relative flex-1">
+                          <input
+                            value={deptSearchInput}
+                            onChange={(e) => {
+                              setDeptSearchInput(e.target.value);
+                              setIsDeptDropdownOpen(true);
+                            }}
+                            onFocus={() => setIsDeptDropdownOpen(true)}
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter") {
+                                e.preventDefault();
+                                handleAddCustomDepts();
+                              }
+                            }}
+                            placeholder="Bölüm arayın veya virgülle ayırın (Örn: Bilgisayar, Tıp, Yazılım, Hukuk, Psikoloji)..."
+                            className="w-full text-xs rounded-xl border border-zinc-200 px-3 py-2.5 outline-none focus:border-violet-600 font-medium"
+                          />
+                        </div>
+                        <button
+                          type="button"
+                          onClick={handleAddCustomDepts}
+                          className="px-4 py-2.5 rounded-xl bg-violet-600 text-white font-bold text-xs hover:bg-violet-700 transition"
+                        >
+                          Ekle
+                        </button>
+                      </div>
+
+                      {/* Dropdown Suggestions */}
+                      {isDeptDropdownOpen && filteredDepts.length > 0 && (
+                        <div className="absolute left-0 right-0 top-full mt-1 bg-white border border-zinc-200 rounded-2xl shadow-2xl z-30 max-h-60 overflow-y-auto p-2 divide-y divide-zinc-50">
+                          <div className="space-y-1">
+                            {filteredDepts.map((d) => {
+                              const isSelected = selectedDepts.includes(d);
+                              return (
+                                <button
+                                  key={d}
+                                  type="button"
+                                  onClick={() => toggleDept(d)}
+                                  className={`w-full text-left px-3 py-2 rounded-xl text-xs font-semibold flex items-center justify-between transition ${
+                                    isSelected ? "bg-violet-50 text-violet-700 font-bold" : "hover:bg-zinc-50 text-zinc-700"
+                                  }`}
+                                >
+                                  <div className="flex items-center gap-2">
+                                    <div className={`h-4 w-4 rounded border grid place-items-center ${isSelected ? "bg-violet-600 border-violet-600 text-white" : "border-zinc-300 bg-white"}`}>
+                                      {isSelected && <Check size={10} />}
+                                    </div>
+                                    <span>{d}</span>
+                                  </div>
+                                  <span className="text-[10px] text-zinc-400">Program</span>
+                                </button>
+                              );
+                            })}
+                          </div>
+
+                          {/* Sticky Dropdown Footer */}
+                          <div className="sticky bottom-0 bg-white pt-2 pb-1 px-2 border-t border-zinc-100 flex items-center justify-between mt-2">
+                            <span className="text-[11px] font-bold text-zinc-500">{selectedDepts.length} bölüm seçili</span>
                             <button
-                              key={u}
-                              onClick={() => toggleUni(u)}
-                              className={chipCls + (selectedUnis.includes(u) ? " bg-subject-matematik text-white border-subject-matematik" : " border-zinc-300 text-zinc-600 hover:border-ink")}
+                              type="button"
+                              onClick={() => {
+                                setIsDeptDropdownOpen(false);
+                                setDeptSearchInput("");
+                              }}
+                              className="px-3.5 py-1.5 bg-violet-600 text-white rounded-lg text-xs font-bold hover:bg-violet-700 shadow-sm transition"
                             >
-                              {u}
+                              ✓ Tamam / Kapat
                             </button>
+                          </div>
+                        </div>
+                      )}
+
+
+                      {/* Seçili Şehir Rozetleri */}
+                      {selectedCities.length > 0 && (
+                        <div className="flex flex-wrap gap-1.5 pt-1">
+                          {selectedCities.map((c) => (
+                            <span
+                              key={c}
+                              className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-violet-50 text-violet-800 text-xs font-bold border border-violet-200"
+                            >
+                              <MapPin size={11} /> {c}
+                              <button onClick={() => toggleCity(c)} className="hover:text-rose-600">
+                                <X size={12} />
+                              </button>
+                            </span>
                           ))}
                         </div>
+                      )}
+                    </div>
+
+                    {/* Bölüm Arama & Dropdown */}
+                    <div className="space-y-2 pt-3 border-t border-zinc-100 relative" ref={deptInputRef}>
+                      <label className="text-xs font-bold text-zinc-700 block flex items-center justify-between">
+                        <span>Bölüm / Program Filtresi ({selectedDepts.length} seçili)</span>
+                        {selectedDepts.length > 0 && (
+                          <button onClick={() => setSelectedDepts([])} className="text-[11px] text-rose-500 font-bold hover:underline">
+                            Seçimleri Temizle
+                          </button>
+                        )}
+                      </label>
+
+                      <div className="flex gap-2">
+                        <div className="relative flex-1">
+                          <input
+                            value={deptSearchInput}
+                            onChange={(e) => {
+                              setDeptSearchInput(e.target.value);
+                              setIsDeptDropdownOpen(true);
+                            }}
+                            onFocus={() => setIsDeptDropdownOpen(true)}
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter") {
+                                e.preventDefault();
+                                handleAddCustomDepts();
+                              }
+                            }}
+                            placeholder="Bölüm arayın veya virgülle ayırın (Örn: Bilgisayar, Tıp, Yazılım, Hukuk, Psikoloji)..."
+                            className="w-full text-xs rounded-xl border border-zinc-200 px-3 py-2.5 outline-none focus:border-violet-600 font-medium"
+                          />
+                        </div>
+                        <button
+                          type="button"
+                          onClick={handleAddCustomDepts}
+                          className="px-4 py-2.5 rounded-xl bg-violet-600 text-white font-bold text-xs hover:bg-violet-700 transition"
+                        >
+                          Ekle
+                        </button>
                       </div>
-                    )}
+
+                      {/* Dropdown Suggestions */}
+                      {isDeptDropdownOpen && filteredDepts.length > 0 && (
+                        <div className="absolute left-0 right-0 top-full mt-1 bg-white border border-zinc-200 rounded-xl shadow-xl z-20 max-h-48 overflow-y-auto p-1.5 divide-y divide-zinc-50">
+                          {filteredDepts.map((d) => {
+                            const isSelected = selectedDepts.includes(d);
+                            return (
+                              <button
+                                key={d}
+                                type="button"
+                                onClick={() => {
+                                  toggleDept(d);
+                                  setDeptSearchInput("");
+                                }}
+                                className={`w-full text-left px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center justify-between transition ${
+                                  isSelected ? "bg-violet-50 text-violet-700" : "hover:bg-zinc-50 text-zinc-700"
+                                }`}
+                              >
+                                <span>{d}</span>
+                                {isSelected && <Check size={14} className="text-violet-600" />}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      )}
+
+                      {/* Seçili Bölüm Rozetleri */}
+                      {selectedDepts.length > 0 && (
+                        <div className="flex flex-wrap gap-1.5 pt-1">
+                          {selectedDepts.map((d) => (
+                            <span
+                              key={d}
+                              className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-indigo-50 text-indigo-800 text-xs font-bold border border-indigo-200"
+                            >
+                              <BookOpen size={11} /> {d}
+                              <button onClick={() => toggleDept(d)} className="hover:text-rose-600">
+                                <X size={12} />
+                              </button>
+                            </span>
+                          ))}
+                        </div>
+                      )}
+                    </div>
                   </Card>
                 </motion.div>
               )}
 
               {/* Navigation */}
-              <div className="flex items-center justify-between mt-5">
+              <div className="flex items-center justify-between mt-6">
                 <button
-                  onClick={back}
+                  onClick={() => setStep((s) => Math.max(0, s - 1))}
                   disabled={step === 0}
-                  className="flex items-center gap-1.5 text-sm font-medium text-zinc-500 hover:text-ink disabled:opacity-30 transition-colors"
+                  className="flex items-center gap-1.5 text-xs font-bold text-zinc-500 hover:text-ink disabled:opacity-30 transition"
                 >
                   <ArrowLeft size={16} /> Geri
                 </button>
+
                 <button
                   onClick={next}
                   disabled={!canNext()}
-                  className="flex items-center gap-2 bg-ink text-white font-semibold px-6 py-2.5 rounded-xl hover:bg-subject-matematik transition-colors disabled:opacity-40"
-                  data-testid="tercih-next"
+                  className="flex items-center gap-2 bg-violet-600 text-white font-bold px-6 py-3 rounded-2xl hover:bg-violet-700 transition disabled:opacity-40 shadow-lg shadow-violet-600/20 text-xs"
                 >
-                  {step === TOTAL_STEPS - 1 ? (
-                    busy ? <Loader2 className="animate-spin" size={16} /> : <><Search size={16} /> Bölümleri Listele</>
+                  {step === 3 ? (
+                    busy ? <Loader2 className="animate-spin" size={16} /> : <><Search size={16} /> Tercih Listesini Oluştur</>
                   ) : (
                     <>İleri <ArrowRight size={16} /></>
                   )}
@@ -399,103 +929,195 @@ export default function TercihRobotu() {
             </div>
           </motion.div>
         ) : (
-          <motion.div
-            key="results"
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            transition={{ duration: 0.4 }}
-            className="space-y-6"
-          >
-            {/* Summary Bar */}
-            <Card className="p-5 bg-gradient-to-br from-subject-matematik/5 to-transparent border-subject-matematik/20">
-              <div className="flex items-center justify-between flex-wrap gap-4">
-                <div className="flex items-center gap-4 flex-wrap">
+          /* Results View */
+          <motion.div key="results" initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-6">
+            {/* Top Summary & Actions Card */}
+            <Card className="p-6 bg-gradient-to-r from-violet-600/5 via-indigo-600/5 to-transparent border-violet-200">
+              <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+                <div className="flex items-center gap-6 flex-wrap">
                   <div>
-                    <div className="text-xs text-zinc-400">Sınav</div>
-                    <div className="font-heading font-bold text-sm">{examLabel}</div>
+                    <div className="text-[10px] uppercase font-bold text-zinc-400">Sınav & Puan Türü</div>
+                    <div className="font-heading font-black text-sm text-ink">{examType} ({scoreType})</div>
                   </div>
-                  <div>
-                    <div className="text-xs text-zinc-400">Puan Türü</div>
-                    <div className="font-heading font-bold text-sm">{scoreTypeLabel}</div>
-                  </div>
-                  <div>
-                    <div className="text-xs text-zinc-400">Puanın</div>
-                    <div className="font-heading font-extrabold text-lg">{results.userScore.toFixed(2)}</div>
-                  </div>
-                  {(selectedCities.length > 0 || selectedUnis.length > 0 || programKeyword) && (
+                  {results.userRank > 0 && (
                     <div>
-                      <div className="text-xs text-zinc-400">Filtreler</div>
-                      <div className="font-heading font-bold text-sm flex items-center gap-1">
-                        <Filter size={12} />
-                        {[
-                          selectedCities.length > 0 && `${selectedCities.length} şehir`,
-                          selectedUnis.length > 0 && `${selectedUnis.length} üniversite`,
-                          programKeyword && `"${programKeyword}"`,
-                        ].filter(Boolean).join(", ") || "Yok"}
+                      <div className="text-[10px] uppercase font-bold text-zinc-400">Sıralamanız</div>
+                      <div className="font-mono font-black text-base text-violet-700">
+                        {results.userRank.toLocaleString("tr-TR")}
                       </div>
                     </div>
                   )}
-                </div>
-                <div className="flex items-center gap-3">
-                  <div className="text-right">
-                    <div className="text-xs text-zinc-400">Uygun Bölüm</div>
-                    <div className="font-heading font-extrabold text-2xl text-subject-matematik">{totalResults}</div>
+                  {results.userScore > 0 && (
+                    <div>
+                      <div className="text-[10px] uppercase font-bold text-zinc-400">Puanınız</div>
+                      <div className="font-heading font-black text-base text-ink">{results.userScore.toFixed(2)}</div>
+                    </div>
+                  )}
+                  <div>
+                    <div className="text-[10px] uppercase font-bold text-zinc-400">Eşleşen Program</div>
+                    <div className="font-heading font-black text-base text-emerald-600">{displayItems.length} Bölüm</div>
                   </div>
+                </div>
+
+                <div className="flex items-center gap-2">
                   <button
                     onClick={reset}
-                    className="flex items-center gap-1.5 text-sm font-medium text-zinc-500 hover:text-ink border border-zinc-300 rounded-lg px-3 py-2 hover:border-ink transition-colors"
+                    className="px-4 py-2 rounded-xl border border-zinc-200 text-xs font-bold text-zinc-700 bg-white hover:bg-zinc-50"
                   >
-                    <ArrowLeft size={14} /> Yeniden
+                    Yeni Tercih Araması
                   </button>
                 </div>
               </div>
             </Card>
 
-            {totalResults === 0 ? (
-              <Card className="p-10 text-center">
-                <p className="text-zinc-500 mb-2">Girdiğin puana ve filtrelere uygun bölüm bulunamadı.</p>
-                <p className="text-sm text-zinc-400">Puanını kontrol edip tekrar deneyebilir veya filtreleri azaltabilirsin.</p>
-                <button onClick={reset} className="mt-4 inline-flex items-center gap-2 text-sm font-semibold text-subject-matematik">
-                  <ArrowLeft size={14} /> Başa dön
+            {/* Filter & Sort Toolbar */}
+            <Card className="p-4">
+              <div className="flex flex-col md:flex-row items-center justify-between gap-3">
+                {/* Category Tabs */}
+                <div className="flex items-center gap-1.5 overflow-x-auto w-full md:w-auto pb-1 md:pb-0">
+                  {[
+                    ["all", "Tümü"],
+                    ["guaranteed", "🟢 Güvenli (%90+)"],
+                    ["likely", "🟣 İdeal (%75)"],
+                    ["reach", "🟡 Sürpriz (%50)"],
+                    ["dream", "🔴 Hayal (%20)"],
+                  ].map(([k, l]) => (
+                    <button
+                      key={k}
+                      onClick={() => setCategoryFilter(k)}
+                      className={`px-3 py-1.5 rounded-xl text-xs font-bold shrink-0 transition ${
+                        categoryFilter === k
+                          ? "bg-violet-600 text-white shadow-sm"
+                          : "bg-zinc-100 text-zinc-600 hover:bg-zinc-200"
+                      }`}
+                    >
+                      {l}
+                    </button>
+                  ))}
+                </div>
+
+                {/* Search & Sort Controls */}
+                <div className="flex items-center gap-2 w-full md:w-auto">
+                  <div className="relative flex-1 md:w-60">
+                    <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400" />
+                    <input
+                      value={resultSearch}
+                      onChange={(e) => setResultSearch(e.target.value)}
+                      placeholder="Sonuçlarda ara (virgülle ayırın)..."
+                      className="w-full pl-8 pr-3 py-1.5 text-xs rounded-xl border border-zinc-200 outline-none focus:border-violet-600 font-medium"
+                    />
+                  </div>
+
+                  <select
+                    value={sortBy}
+                    onChange={(e) => setSortBy(e.target.value)}
+                    className="py-1.5 px-3 text-xs rounded-xl border border-zinc-200 outline-none font-bold text-zinc-700 bg-white"
+                  >
+                    <option value="chance">🎯 İhtimal Sıralaması</option>
+                    <option value="rank_asc">📈 Başarı Sırasına Göre</option>
+                    <option value="score_desc">🏆 Taban Puana Göre</option>
+                    <option value="quota_desc">👥 Kontenjana Göre</option>
+                  </select>
+                </div>
+              </div>
+            </Card>
+
+            {/* Program List */}
+            {displayItems.length === 0 ? (
+              <Card className="p-12 text-center text-zinc-400 space-y-3">
+                <p className="text-sm font-semibold">Aradığınız kriterlere uygun üniversite programı veya lise bulunamadı.</p>
+                <button onClick={() => { setCategoryFilter("all"); setResultSearch(""); }} className="text-xs font-bold text-violet-600 hover:underline">
+                  Filtreleri Temizle
                 </button>
               </Card>
             ) : (
-              <>
-                <div className="text-sm text-zinc-500 px-1">
-                  {examLabel} · {scoreTypeLabel} puan türünde <strong className="text-ink">{results.userScore.toFixed(2)}</strong> puanınla sana uygun bölümler:
-                </div>
-                {results.guaranteed.length > 0 && (
-                  <ProgramList
-                    title="Rahatlıkla Yerleşebileceğin Bölümler"
-                    programs={results.guaranteed}
-                    category="guaranteed"
-                    icon={Target}
-                    color="#059669"
+              <div className="space-y-3">
+                {displayItems.map((prog, idx) => (
+                  <ProgramCard
+                    key={prog.id}
+                    program={prog}
+                    index={idx}
+                    userRank={results.userRank}
+                    onToggleBasket={toggleBasket}
+                    isInBasket={basket.some((p) => p.id === prog.id)}
                   />
-                )}
-                {results.likely.length > 0 && (
-                  <ProgramList
-                    title="Muhtemelen Yerleşebileceğin Bölümler"
-                    programs={results.likely}
-                    category="likely"
-                    icon={TrendingUp}
-                    color="#D97706"
-                  />
-                )}
-                {results.reach.length > 0 && (
-                  <ProgramList
-                    title="Çalışarak Ulaşabileceğin Bölümler"
-                    programs={results.reach}
-                    category="reach"
-                    icon={Compass}
-                    color="#E11D48"
-                  />
-                )}
-              </>
+                ))}
+              </div>
             )}
           </motion.div>
         )}
       </AnimatePresence>
+
+      {/* Tercih Sepeti Modal (24 Tercih Listesi) */}
+      {isBasketModalOpen && (
+        <div className="fixed inset-0 z-50 bg-black/40 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-white rounded-3xl w-full max-w-2xl shadow-2xl p-6 space-y-4 max-h-[90vh] flex flex-col">
+            <div className="flex items-center justify-between border-b border-zinc-100 pb-3">
+              <div className="flex items-center gap-2">
+                <Star size={18} className="text-amber-500 fill-amber-500" />
+                <h3 className="font-heading font-black text-base text-ink">
+                  ÖSYM Tercih Listem ({basket.length}/24)
+                </h3>
+              </div>
+              <button onClick={() => setIsBasketModalOpen(false)} className="text-xs font-bold text-zinc-400 hover:text-ink">
+                Kapat
+              </button>
+            </div>
+
+            <div className="flex-1 overflow-y-auto space-y-2 pr-1 divide-y divide-zinc-100">
+              {basket.map((p, idx) => (
+                <div key={p.id} className="pt-2 flex items-center justify-between gap-3 text-xs">
+                  <div className="flex items-center gap-3">
+                    <span className="h-6 w-6 rounded-full bg-violet-100 text-violet-800 font-black grid place-items-center shrink-0 text-[11px]">
+                      {idx + 1}
+                    </span>
+                    <div>
+                      <div className="font-bold text-ink">{p.program}</div>
+                      <div className="text-[11px] text-zinc-400">{p.university} · {p.city}</div>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-4 shrink-0">
+                    <div className="text-right">
+                      <div className="font-bold text-violet-700">{Number(p.score_2025 || 0).toFixed(2)}</div>
+                      <div className="text-[10px] text-zinc-400">{p.rank_2025 ? p.rank_2025.toLocaleString("tr-TR") : "—"}</div>
+                    </div>
+                    <button
+                      onClick={() => toggleBasket(p)}
+                      className="p-1.5 text-zinc-400 hover:text-rose-600 rounded-lg transition"
+                      title="Listeden Çıkar"
+                    >
+                      <Trash2 size={14} />
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            <div className="flex items-center justify-between pt-3 border-t border-zinc-100">
+              <button
+                onClick={() => {
+                  window.print();
+                }}
+                className="flex items-center gap-1.5 px-4 py-2 rounded-xl border border-zinc-200 text-xs font-bold text-zinc-700 hover:bg-zinc-50"
+              >
+                <Printer size={14} /> Yazdır / PDF
+              </button>
+
+              <button
+                onClick={() => {
+                  const text = basket.map((p, i) => `${i + 1}. ${p.program} - ${p.university} (${p.city}) | Taban Sıra: ${p.rank_2025 || "-"}`).join("\n");
+                  navigator.clipboard.writeText(text);
+                  toast.success("Tercih listeniz panoya kopyalandı!");
+                }}
+                className="flex items-center gap-1.5 px-5 py-2 rounded-xl bg-violet-600 text-white text-xs font-bold hover:bg-violet-700 shadow-md shadow-violet-600/20"
+              >
+                <Download size={14} /> Listeyi Kopyala
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

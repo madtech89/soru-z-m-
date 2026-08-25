@@ -10,10 +10,10 @@ load_dotenv(ROOT_DIR / ".env")
 
 MYSQL_URL = os.environ.get(
     "MYSQL_URL",
-    "mysql+aiomysql://root:@127.0.0.1:3306/netor_db?charset=utf8mb4"
+    "mysql+aiomysql://root:@127.0.0.1:3306/hedefmatik_db?charset=utf8mb4"
 )
 
-DB_NAME = os.environ.get("DB_NAME", "netor_db")
+DB_NAME = os.environ.get("DB_NAME", "hedefmatik_db")
 DB_USER = os.environ.get("DB_USER", "root")
 DB_PASSWORD = os.environ.get("DB_PASSWORD", "")
 DB_HOST = os.environ.get("DB_HOST", "127.0.0.1")
@@ -83,14 +83,23 @@ def ensure_database_exists():
                     cursor.execute("ALTER TABLE `users` ADD COLUMN `level` INT DEFAULT 1;")
                 if "placement_completed" not in cols:
                     cursor.execute("ALTER TABLE `users` ADD COLUMN `placement_completed` TINYINT(1) DEFAULT 0;")
+                if "plan" not in cols:
+                    cursor.execute("ALTER TABLE `users` ADD COLUMN `plan` VARCHAR(50) DEFAULT 'free';")
+                if "plan_expires_at" not in cols:
+                    cursor.execute("ALTER TABLE `users` ADD COLUMN `plan_expires_at` VARCHAR(50) NULL;")
+                if "ai_credits" not in cols:
+                    cursor.execute("ALTER TABLE `users` ADD COLUMN `ai_credits` INT DEFAULT 100;")
 
             # Auto-migrate exams columns
+
             cursor.execute("SHOW TABLES LIKE 'exams';")
             if cursor.fetchone():
                 cursor.execute("SHOW COLUMNS FROM `exams`;")
                 e_cols = {row[0] for row in cursor.fetchall()}
                 if "category" not in e_cols:
                     cursor.execute("ALTER TABLE `exams` ADD COLUMN `category` VARCHAR(50) DEFAULT 'universite';")
+                if "exam_date" not in e_cols:
+                    cursor.execute("ALTER TABLE `exams` ADD COLUMN `exam_date` VARCHAR(50) NULL;")
 
             # Auto-migrate questions columns
             cursor.execute("SHOW TABLES LIKE 'questions';")

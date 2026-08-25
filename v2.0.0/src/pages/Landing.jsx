@@ -120,6 +120,15 @@ function LandingDropdownDivider() {
 
 export default function Landing() {
   const { user } = useAuth();
+  const [blogs, setBlogs] = useState([]);
+
+  useEffect(() => {
+    fetch(`${import.meta.env.VITE_API_URL || "http://127.0.0.1:8001/api"}/blog?limit=3`)
+      .then((res) => res.json())
+      .then((data) => setBlogs(data || []))
+      .catch(() => {});
+  }, []);
+
   const heroRef = useRef(null);
   const [exams, setExams] = useState([]);
   const [subjCache, setSubjCache] = useState({});
@@ -154,7 +163,7 @@ export default function Landing() {
           <div className="glass rounded-full border border-white/60 shadow-[0_8px_32px_rgba(0,0,0,0.05)] flex items-center justify-between pl-6 pr-2 py-2">
             <Link to="/" data-testid="logo-home" className="flex items-center gap-2">
               <span className="h-7 w-7 rounded-lg bg-subject-matematik grid place-items-center"><Sparkles size={15} className="text-white" /></span>
-              <span className="font-heading font-extrabold text-lg tracking-tight">Netor</span>
+              <span className="font-heading font-extrabold text-lg tracking-tight">HedefMatik</span>
             </Link>
             <nav className="flex items-center gap-0.5 text-sm max-w-[56vw] sm:max-w-none">
               {/* Sınavlar dropdown — kademeli */}
@@ -366,13 +375,64 @@ export default function Landing() {
         </div>
       </section>
 
+      {/* 🚀 HEDEFMATİK GÜNDEM & SINAV REHBERİ BLOG KARTI */}
+      {blogs.length > 0 && (
+        <section id="blog" className="relative py-20 bg-zinc-50 border-t border-zinc-200">
+          <div className="mx-auto max-w-7xl px-5 sm:px-8">
+            <Reveal>
+              <div className="flex flex-wrap items-end justify-between gap-4 mb-10">
+                <div>
+                  <div className="font-editorial italic text-violet-600 text-lg mb-2">— güncel gelişmeler & rehberler</div>
+                  <h2 className="font-heading font-extrabold tracking-tighter text-3xl sm:text-4xl">
+                    HedefMatik Rehber & Sınav Blogu
+                  </h2>
+                </div>
+                <Link to="/blog" className="text-sm font-bold text-violet-600 hover:text-violet-800 underline flex items-center gap-1">
+                  Tüm Yazıları Gör <ArrowRight size={14} />
+                </Link>
+              </div>
+            </Reveal>
+
+            <div className="grid md:grid-cols-3 gap-6">
+              {blogs.map((b, i) => (
+                <Reveal key={b.id} delay={i * 0.1}>
+                  <Link to={`/blog/${b.slug}`} className="group flex flex-col h-full bg-white rounded-3xl overflow-hidden border border-zinc-200 shadow-sm hover:shadow-md hover:-translate-y-1 transition-all">
+                    <div className="relative overflow-hidden aspect-video bg-zinc-100">
+                      <img src={b.image_url || "https://images.unsplash.com/photo-1522202176988-66273c2fd55f?q=80&w=600&auto=format&fit=crop"} alt={b.title} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300" />
+                      <span className="absolute top-3 left-3 px-3 py-1 bg-violet-600 text-white font-bold text-[10px] rounded-full uppercase tracking-wider shadow-sm">
+                        {b.category}
+                      </span>
+                    </div>
+                    <div className="p-6 flex-1 flex flex-col justify-between space-y-4">
+                      <div className="space-y-2">
+                        <span className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider">{b.created_at?.split("T")[0] || "Haber"} · {b.views || 0} okuma</span>
+                        <h3 className="font-heading font-bold text-lg text-ink group-hover:text-violet-600 transition-colors line-clamp-2 leading-snug">
+                          {b.title}
+                        </h3>
+                        <p className="text-xs text-zinc-500 line-clamp-3 leading-relaxed">
+                          {b.summary}
+                        </p>
+                      </div>
+                      <span className="inline-flex items-center gap-1 text-xs font-bold text-ink group-hover:text-violet-600 transition-colors pt-2">
+                        Yazıyı Oku <ArrowRight size={14} className="group-hover:translate-x-1 transition-transform" />
+                      </span>
+                    </div>
+                  </Link>
+                </Reveal>
+              ))}
+            </div>
+          </div>
+        </section>
+      )}
+
       <footer className="relative border-t border-zinc-200 py-12 mt-8">
+
         <div className="mx-auto max-w-7xl px-5 sm:px-8 flex flex-col sm:flex-row items-center justify-between gap-4 text-sm text-zinc-500">
           <div className="flex items-center gap-2">
             <span className="h-6 w-6 rounded-md bg-subject-matematik grid place-items-center"><Sparkles size={12} className="text-white" /></span>
-            <span className="font-heading font-bold text-ink">Netor</span>
+            <span className="font-heading font-bold text-ink">HedefMatik</span>
           </div>
-          <p>© 2026 Netor · Türkiye Sınav Hazırlık Platformu</p>
+          <p>© 2026 HedefMatik (hedefmatik.com) · Türkiye Sınav Hazırlık ve Tercih Platformu</p>
           <div className="flex gap-6">
             <Link to="/login" className="hover:text-ink transition-colors">Giriş</Link>
             <Link to="/register" className="hover:text-ink transition-colors">Kayıt</Link>

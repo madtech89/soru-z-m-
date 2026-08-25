@@ -1,12 +1,12 @@
 import { NavLink, Outlet, useNavigate, Link } from "react-router-dom";
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useCallback } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import { useAuth } from "@/context/AuthContext";
-import { fetchExams, fetchSubjects, EXAM_CATEGORIES } from "@/lib/api";
+import { fetchExams, fetchSubjects, fetchTopics, EXAM_CATEGORIES, fetchCreditBalance } from "@/lib/api";
 import {
   LayoutDashboard, GraduationCap, FileText, Library, Target,
   Trophy, Brain, User, LogOut, Sparkles, ShieldCheck, BookOpen, Calculator, Menu, X, Award, MessageSquare,
-  ChevronDown, ChevronRight, Compass, Clock, BookCopy, Home,
+  ChevronDown, ChevronRight, Compass, Clock, BookCopy, Home, Zap,
 } from "lucide-react";
 
 function useClickOutside(ref, cb) {
@@ -38,7 +38,7 @@ function Dropdown({ label, icon: Icon, children }) {
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: -6 }}
             transition={{ duration: 0.15 }}
-            className="absolute top-full left-0 pt-1 w-56 bg-white rounded-2xl shadow-xl border border-zinc-100 py-2 z-50"
+            className="absolute top-full left-0 pt-1 w-60 bg-white rounded-2xl shadow-xl border border-zinc-100 py-2 z-50"
           >
             {children}
           </motion.div>
@@ -48,7 +48,90 @@ function Dropdown({ label, icon: Icon, children }) {
   );
 }
 
-function CascadingItem({ label, exams, subjCache, loadSubjects, basePath }) {
+function CascadingSubjectItem({ examId, subject, basePath, topicCache, loadTopics }) {
+  const [subOpen, setSubOpen] = useState(false);
+  const key = `${examId}_${subject.id}`;
+  const topics = topicCache[key] || [];
+
+  return (
+    <div
+      className="relative"
+      onMouseEnter={() => { setSubOpen(true); loadTopics(examId, subject.id); }}
+      onMouseLeave={() => setSubOpen(false)}
+    >
+      <div className="flex items-center justify-between px-4 py-2 text-xs font-semibold text-zinc-700 hover:bg-zinc-50 cursor-pointer transition-colors">
+        <span className="truncate">{subject.name}</span>
+        <ChevronRight size={12} className={`text-zinc-400 transition-transform ${subOpen ? "rotate-90" : ""}`} />
+      </div>
+
+      {subOpen && (
+        <div className="absolute left-full top-0 pl-1 w-64 max-h-[75vh] overflow-y-auto rounded-2xl border border-zinc-200 bg-white py-2 shadow-2xl z-50">
+          <NavLink
+            to={`${basePath}?exam_id=${examId}&subject_id=${subject.id}`}
+            className="block px-4 py-1.5 text-xs font-bold text-ink hover:bg-zinc-50 border-b border-zinc-100 mb-1"
+          >
+            {subject.name} (Tümü)
+          </NavLink>
+          {topics.length === 0 ? (
+            <div className="px-4 py-2 text-[11px] text-zinc-400 italic">Konular yükleniyor...</div>
+          ) : (
+            topics.map((t) => (
+              <NavLink
+                key={t.id}
+                to={`${basePath}?exam_id=${examId}&subject_id=${subject.id}&topic_id=${t.id}`}
+                className="block px-4 py-1.5 text-[11px] text-zinc-600 hover:bg-subject-matematik/10 hover:text-subject-matematik truncate transition"
+              >
+                {t.name}
+              </NavLink>
+            ))
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function CascadingExamItem({ exam, basePath, subjCache, loadSubjects, topicCache, loadTopics }) {
+  const [subOpen, setSubOpen] = useState(false);
+  const subjects = subjCache[exam.id] || [];
+
+  return (
+    <div
+      className="relative"
+      onMouseEnter={() => { setSubOpen(true); loadSubjects(exam.id); }}
+      onMouseLeave={() => setSubOpen(false)}
+    >
+      <div className="flex items-center justify-between px-4 py-2 text-sm font-medium text-zinc-700 hover:bg-zinc-50 cursor-pointer transition-colors">
+        <span>{exam.name}</span>
+        <ChevronRight size={14} className={`text-zinc-400 transition-transform ${subOpen ? "rotate-90" : ""}`} />
+      </div>
+
+      {subOpen && (
+        <div className="absolute left-full top-0 pl-1 w-64 max-h-[75vh] overflow-y-auto rounded-2xl border border-zinc-200 bg-white py-2 shadow-2xl z-50">
+          <DropdownLink to={`${basePath}?exam_id=${exam.id}`} className="font-bold border-b border-zinc-100 mb-1">
+            {exam.name} (Tüm Dersler)
+          </DropdownLink>
+          {subjects.length === 0 ? (
+            <div className="px-4 py-2 text-xs text-zinc-400 italic">Dersler yükleniyor...</div>
+          ) : (
+            subjects.map((s) => (
+              <CascadingSubjectItem
+                key={s.id}
+                examId={exam.id}
+                subject={s}
+                basePath={basePath}
+                topicCache={topicCache}
+                loadTopics={loadTopics}
+              />
+            ))
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function CascadingCategoryItem({ label, exams, subjCache, loadSubjects, topicCache, loadTopics, basePath }) {
   const [subOpen, setSubOpen] = useState(false);
   return (
     <div className="relative" onMouseEnter={() => setSubOpen(true)} onMouseLeave={() => setSubOpen(false)}>
@@ -57,23 +140,24 @@ function CascadingItem({ label, exams, subjCache, loadSubjects, basePath }) {
         <ChevronRight size={14} className={`text-zinc-400 transition-transform ${subOpen ? "rotate-90" : ""}`} />
       </div>
       {subOpen && exams.length > 0 && (
-        <div className="absolute left-full top-0 pl-1 w-56 max-h-[70vh] overflow-y-auto rounded-2xl border border-zinc-200 bg-white py-2 shadow-xl z-50">
+        <div className="absolute left-full top-0 pl-1 w-60 max-h-[70vh] overflow-y-auto rounded-2xl border border-zinc-200 bg-white py-2 shadow-xl z-50">
           {exams.map((e) => (
-            <div key={e.id} onMouseEnter={() => loadSubjects(e.id)}>
-              <DropdownLink to={`${basePath}?exam_id=${e.id}`}>{e.name}</DropdownLink>
-              {subjCache[e.id]?.map((s) => (
-                <NavLink key={s.id} to={`${basePath}?exam_id=${e.id}&subject_id=${s.id}`}
-                  className="block pl-8 pr-4 py-2 text-sm text-zinc-500 hover:bg-zinc-50 hover:text-zinc-700">
-                  {s.name}
-                </NavLink>
-              ))}
-            </div>
+            <CascadingExamItem
+              key={e.id}
+              exam={e}
+              basePath={basePath}
+              subjCache={subjCache}
+              loadSubjects={loadSubjects}
+              topicCache={topicCache}
+              loadTopics={loadTopics}
+            />
           ))}
         </div>
       )}
     </div>
   );
 }
+
 
 function DropdownLink({ to, children, onClick }) {
   return (
@@ -108,12 +192,27 @@ export default function AppLayout() {
   const [menu, setMenu] = useState(false);
   const [exams, setExams] = useState([]);
   const [subjCache, setSubjCache] = useState({});
+  const [topicCache, setTopicCache] = useState({});
+  const [credits, setCredits] = useState(null);
 
   useEffect(() => { fetchExams().then(setExams).catch(() => setExams([])); }, []);
+
+  const refreshCredits = useCallback(() => {
+    if (!user) return;
+    fetchCreditBalance().then(r => setCredits(r.balance)).catch(() => {});
+  }, [user]);
+
+  useEffect(() => { refreshCredits(); }, [refreshCredits]);
 
   const loadSubjects = (examId) => {
     if (subjCache[examId]) return;
     fetchSubjects(examId).then((r) => setSubjCache((c) => ({ ...c, [examId]: r }))).catch(() => {});
+  };
+
+  const loadTopics = (examId, subjectId) => {
+    const key = `${examId}_${subjectId}`;
+    if (topicCache[key]) return;
+    fetchTopics(examId, subjectId).then((r) => setTopicCache((c) => ({ ...c, [key]: r }))).catch(() => {});
   };
 
   const doLogout = async () => { await logout(); nav("/"); };
@@ -137,20 +236,29 @@ export default function AppLayout() {
           <div className="flex items-center gap-1">
             <NavLink to={user ? "/app" : "/"} className="flex items-center gap-2 mr-3">
               <span className="h-7 w-7 rounded-lg bg-subject-matematik grid place-items-center"><Sparkles size={14} className="text-white" /></span>
-              <span className="font-heading font-extrabold text-lg hidden sm:block">Netor</span>
+              <span className="font-heading font-extrabold text-lg hidden sm:block">HedefMatik</span>
             </NavLink>
             <Link to="/" className="hidden sm:flex items-center gap-1 text-sm text-zinc-500 hover:text-ink mr-2 transition-colors">
               <Home size={15} /> Ana Sayfa
             </Link>
 
             <nav className="hidden md:flex items-center gap-0.5">
-              {/* Ana Sayfa */}
-              <NavLink to="/app" end className={headerCls}><LayoutDashboard size={16} /> Ana Sayfa</NavLink>
+              {/* Dashboard */}
+              <NavLink to="/app" end className={headerCls}><LayoutDashboard size={16} /> Dashboard</NavLink>
 
               {/* Sınav türleri dropdown — kademeli */}
-              <Dropdown label="Sinavlar" icon={GraduationCap}>
+              <Dropdown label="Sınavlar" icon={GraduationCap}>
                 {examsByCat.map((cat) => (
-                  <CascadingItem key={cat.key} label={cat.label} exams={cat.exams} subjCache={subjCache} loadSubjects={loadSubjects} basePath="/app/soru-bankasi" />
+                  <CascadingCategoryItem
+                    key={cat.key}
+                    label={cat.label}
+                    exams={cat.exams}
+                    subjCache={subjCache}
+                    loadSubjects={loadSubjects}
+                    topicCache={topicCache}
+                    loadTopics={loadTopics}
+                    basePath="/app/soru-bankasi"
+                  />
                 ))}
               </Dropdown>
 
@@ -159,17 +267,28 @@ export default function AppLayout() {
 
               {/* Dersler dropdown — kademeli */}
               <Dropdown label="Dersler" icon={BookCopy}>
-                <DropdownLink to="/app/ders-notlari">Ders Notlari</DropdownLink>
-                <DropdownLink to="/app/soru-bankasi">Soru Bankasi</DropdownLink>
-                <DropdownLink to="/app/eksiklerim">Eksiklerim</DropdownLink>
+                <DropdownLink to="/app/ders-notlari">📚 Tüm Ders Notları</DropdownLink>
+                <DropdownLink to="/app/soru-bankasi">❓ Soru Bankası</DropdownLink>
+                <DropdownLink to="/app/eksiklerim">🎯 Eksiklerim & Zayıf Konular</DropdownLink>
                 <DropdownDivider />
+                <div className="px-4 py-1 text-[11px] font-bold uppercase tracking-wider text-zinc-400">Sınav & Branş Müfredatı</div>
                 {examsByCat.map((cat) => (
-                  <CascadingItem key={cat.key} label={cat.label} exams={cat.exams} subjCache={subjCache} loadSubjects={loadSubjects} basePath="/app/ders-notlari" />
+                  <CascadingCategoryItem
+                    key={cat.key}
+                    label={cat.label}
+                    exams={cat.exams}
+                    subjCache={subjCache}
+                    loadSubjects={loadSubjects}
+                    topicCache={topicCache}
+                    loadTopics={loadTopics}
+                    basePath="/app/ders-notlari"
+                  />
                 ))}
               </Dropdown>
 
               {/* Araclar dropdown */}
-              <Dropdown label="Araclar" icon={Calculator}>
+              <Dropdown label="Araçlar" icon={Calculator}>
+
                 <DropdownLink to="/app/puan-hesapla">Puan Hesapla</DropdownLink>
                 <DropdownLink to="/app/tercih-robotu">Tercih Robotu</DropdownLink>
                 <DropdownLink to="/app/geri-sayim">Geri Sayim</DropdownLink>
@@ -187,9 +306,23 @@ export default function AppLayout() {
             </nav>
           </div>
 
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2">
             {user ? (
               <>
+                {/* Kredi Göstergesi */}
+                {credits !== null && (
+                  <NavLink
+                    to="/app/kredi-al"
+                    className={`hidden md:flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-bold transition-all ${
+                      credits <= 15
+                        ? "bg-red-50 text-red-600 border border-red-200 animate-pulse"
+                        : "bg-violet-50 text-violet-700 border border-violet-200 hover:bg-violet-100"
+                    }`}
+                  >
+                    <Zap size={13} />
+                    {credits} Kredi
+                  </NavLink>
+                )}
                 <NavLink to="/app/profil" className={`hidden md:flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm font-medium hover:bg-black/5 transition-colors ${user?.role === "admin" ? "" : ""}`}>
                   <div className="h-7 w-7 rounded-full bg-subject-matematik/15 grid place-items-center font-heading font-bold text-subject-matematik text-xs">
                     {(user?.name || "U").charAt(0).toUpperCase()}
@@ -216,6 +349,26 @@ export default function AppLayout() {
         </div>
       </header>
 
+      {/* Düşük Kredi Uyarı Bandı */}
+      <AnimatePresence>
+        {user && credits !== null && credits > 0 && credits <= 15 && (
+          <motion.div
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: "auto", opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            className="bg-amber-50 border-b border-amber-200 overflow-hidden"
+          >
+            <div className="flex items-center justify-between px-4 sm:px-6 py-2 text-xs text-amber-800">
+              <span className="flex items-center gap-1.5 font-medium">
+                <Zap size={13} className="text-amber-600" />
+                Krediniz tükenmek üzere ({credits} kredi kaldı). Sınav maratonunda yarı yolda kalmayın!
+              </span>
+              <NavLink to="/app/kredi-al" className="font-bold underline hover:text-amber-900">Kredi Yükle →</NavLink>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
       {/* Mobile drawer */}
       <AnimatePresence>
         {menu && (
@@ -230,7 +383,7 @@ export default function AppLayout() {
                   <Home size={18} /> Ana Sayfa
                 </Link>
                 {[
-                  ["/app", "Ana Sayfa", LayoutDashboard, true],
+                  ["/app", "Dashboard", LayoutDashboard, true],
                   ["/app/sinavlar", "Sinavlar", GraduationCap, false],
                   ["/app/denemeler", "Denemeler", FileText, false],
                   ["/app/soru-bankasi", "Soru Bankasi", Library, false],
@@ -282,7 +435,7 @@ export default function AppLayout() {
 
       <nav className="md:hidden fixed bottom-0 inset-x-0 z-40 bg-white border-t border-zinc-200 shadow-sm grid grid-cols-5 px-2 pt-2 pb-[max(0.5rem,env(safe-area-inset-bottom))]">
         {[
-          { to: "/app", label: "Ana", icon: LayoutDashboard, end: true },
+          { to: "/app", label: "Dashboard", icon: LayoutDashboard, end: true },
           { to: "/app/denemeler", label: "Deneme", icon: FileText },
           { to: "/app/soru-bankasi", label: "Sorular", icon: Library },
           { to: "/app/geri-sayim", label: "Sayim", icon: Clock },

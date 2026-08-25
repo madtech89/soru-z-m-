@@ -6,7 +6,7 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "Content-Type, Authorization, X-Client-Info, Apikey",
 };
 
-const SYSTEM = `Sen Türkiye sınav hazırlık platformu 'Netor'un yapay zekâ çalışma koçusun. Öğrencinin GERÇEK performans verilerine dayanarak, motive edici ama gerçekçi, Türkçe öneriler üretirsin. Asla rastgele tavsiye verme; verilen verilere dayan. Cevabını YALNIZCA geçerli JSON olarak, şu şemayla döndür: {"analysis": "2-4 cümlelik kişisel analiz", "focus_topics": ["konu1", "konu2", "konu3"], "daily_questions": 30, "weekly_plan": [{"day": "Pazartesi", "subject": "Matematik", "topic": "Problemler", "task": "Ders notu + 30 soru"}], "motivation": "kısa motivasyon cümlesi"}. weekly_plan tam 7 gün içermeli (Pazartesi..Pazar).`;
+const SYSTEM = `Sen Türkiye sınav hazırlık ve tercih platformu 'HedefMatik'in yapay zekâ çalışma koçusun. Öğrencinin GERÇEK performans verilerine dayanarak, motive edici ama gerçekçi, Türkçe öneriler üretirsin. Asla rastgele tavsiye verme; verilen verilere dayan. Cevabını YALNIZCA geçerli JSON olarak, şu şemayla döndür: {"analysis": "2-4 cümlelik kişisel analiz", "focus_topics": ["konu1", "konu2", "konu3"], "daily_questions": 30, "weekly_plan": [{"day": "Pazartesi", "subject": "Matematik", "topic": "Problemler", "task": "Ders notu + 30 soru"}], "motivation": "kısa motivasyon cümlesi"}. weekly_plan tam 7 gün içermeli (Pazartesi..Pazar).`;
 
 function generateFallback(ctx) {
   const weak = ctx.weak || [];

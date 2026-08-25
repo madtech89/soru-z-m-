@@ -128,7 +128,7 @@ export default function Register() {
       {modal === "kvkk" && (
         <LegalModal title="KVKK Aydınlatma Metni" onClose={() => setModal(null)}>
           <p><strong>1. Veri Sorumlusu</strong></p>
-          <p>Netor ("Şirket"), 6698 sayılı Kişisel Verilerin Korunması Kanunu ("KVKK") kapsamında veri sorumlusudur.</p>
+          <p>HedefMatik ("Şirket"), 6698 sayılı Kişisel Verilerin Korunması Kanunu ("KVKK") kapsamında veri sorumlusudur.</p>
           <p><strong>2. İşlenen Kişisel Veriler</strong></p>
           <p>Ad soyad, e-posta adresi, cep telefonu numarası, sınav tercihleri, çözüm sonuçları ve platform kullanım verileriniz işlenmektedir.</p>
           <p><strong>3. İşleme Amaçları</strong></p>
@@ -150,7 +150,7 @@ export default function Register() {
 
       {modal === "terms" && (
         <LegalModal title="Kullanım Koşulları" onClose={() => setModal(null)}>
-          <p>Netor platformunu kullanarak bu koşulları kabul etmiş olursunuz. Platform yalnızca kişisel kullanım içindir ve içeriğin izinsiz kopyalanması yasaktır.</p>
+          <p>HedefMatik platformunu kullanarak bu koşulları kabul etmiş olursunuz. Platform yalnızca kişisel kullanım içindir ve içeriğin izinsiz kopyalanması yasaktır.</p>
           <p>Hizmet "olduğu gibi" sunulur ve belirli bir sonuç garanti edilmez. Platform, herhangi bir zamanda bildirimde bulunarak hizmeti değiştirme veya durdurma hakkını saklı tutar.</p>
           <p>Platformun kötüye kullanımı (otomatik botlar, hesap paylaşımı, içerik çalma) hesabınızın kapatılmasına neden olabilir.</p>
         </LegalModal>
@@ -167,7 +167,7 @@ export default function Register() {
 
       {modal === "cookie" && (
         <LegalModal title="Çerez Politikası" onClose={() => setModal(null)}>
-          <p>Netor, kullanıcı deneyimini iyileştirmek için çerezler (cookies) ve benzer teknolojiler kullanır.</p>
+          <p>HedefMatik, kullanıcı deneyimini iyileştirmek için çerezler (cookies) ve benzer teknolojiler kullanır.</p>
           <p>Zorunlu çerezler: platformun temel işlevleri için gereklidir ve kapatılamaz.</p>
           <p>Analitik çerezler: kullanım alışkanlıklarını analiz etmek için kullanılır ve tarayıcı ayarlarınızdan devre dışı bırakılabilir.</p>
           <p>Pazarlama çerezleri: yalnızca pazarlama izni verdiğinizde aktif olur.</p>

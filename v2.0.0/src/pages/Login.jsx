@@ -13,7 +13,7 @@ export function AuthShell({ title, subtitle, children }) {
       <div className="flex flex-col justify-center px-6 sm:px-14 py-10">
         <Link to="/" className="flex items-center gap-2 mb-12" data-testid="auth-logo">
           <span className="h-8 w-8 rounded-lg bg-subject-matematik grid place-items-center"><Sparkles size={16} className="text-white" /></span>
-          <span className="font-heading font-extrabold text-xl tracking-tight">Netor</span>
+          <span className="font-heading font-extrabold text-xl tracking-tight">HedefMatik</span>
         </Link>
         <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.6, ease: [0.16, 1, 0.3, 1] }} className="w-full max-w-sm">
           <h1 className="font-heading font-extrabold tracking-tighter text-4xl mb-2">{title}</h1>

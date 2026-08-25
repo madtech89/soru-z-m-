@@ -1,13 +1,14 @@
 import { useEffect, useState, useCallback } from "react";
 import { motion } from "framer-motion";
 import { Check, X, ChevronLeft, ChevronRight, Filter } from "lucide-react";
-import { fetchExams, fetchSubjects, fetchQuestions, answerPracticeQuestion } from "@/lib/api";
+import { fetchExams, fetchSubjects, fetchTopics, fetchQuestions, answerPracticeQuestion } from "@/lib/api";
 import { useAuth } from "@/context/AuthContext";
 import { PageHeader, Card, Spinner, Empty, EASE } from "@/app/ui";
 import { tone } from "@/lib/subjects";
 
 const OPTS = ["A", "B", "C", "D", "E"];
 const DIFFS = [["", "Tümü"], ["kolay", "Kolay"], ["orta", "Orta"], ["zor", "Zor"]];
+
 
 function QuestionCard({ q, subjectSlug, userId }) {
   const [sel, setSel] = useState(null);
@@ -66,20 +67,26 @@ export default function QuestionBank() {
   const { user } = useAuth();
   const [exams, setExams] = useState([]);
   const [subjects, setSubjects] = useState([]);
+  const [topics, setTopics] = useState([]);
   const [subjMap, setSubjMap] = useState({});
-  const [f, setF] = useState({ exam_id: "", subject_id: "", difficulty: "", status: "", result_filter: "" });
+  const [f, setF] = useState({ exam_id: "", subject_id: "", topic_id: "", difficulty: "", status: "", result_filter: "" });
   const [data, setData] = useState(null);
   const [page, setPage] = useState(1);
 
   useEffect(() => { fetchExams().then(setExams).catch(() => setExams([])); }, []);
 
   useEffect(() => {
-    if (!f.exam_id) { setSubjects([]); return; }
+    if (!f.exam_id) { setSubjects([]); setTopics([]); return; }
     fetchSubjects(f.exam_id).then((r) => {
       setSubjects(r);
       setSubjMap(Object.fromEntries(r.map((s) => [s.id, s.slug])));
     }).catch(() => setSubjects([]));
   }, [f.exam_id]);
+
+  useEffect(() => {
+    if (!f.exam_id || !f.subject_id) { setTopics([]); return; }
+    fetchTopics(f.exam_id, f.subject_id).then(setTopics).catch(() => setTopics([]));
+  }, [f.exam_id, f.subject_id]);
 
   const load = useCallback(() => {
     setData(null);
@@ -88,7 +95,15 @@ export default function QuestionBank() {
 
   useEffect(() => { load(); }, [load]);
 
-  const set = (k, v) => { setPage(1); setF((s) => ({ ...s, [k]: v, ...(k === "exam_id" ? { subject_id: "" } : {}) })); };
+  const set = (k, v) => {
+    setPage(1);
+    setF((s) => ({
+      ...s,
+      [k]: v,
+      ...(k === "exam_id" ? { subject_id: "", topic_id: "" } : {}),
+      ...(k === "subject_id" ? { topic_id: "" } : {}),
+    }));
+  };
   const selCls = "rounded-xl border border-zinc-300 bg-white px-3 py-2 text-sm outline-none focus:border-subject-matematik";
 
   return (
@@ -106,6 +121,10 @@ export default function QuestionBank() {
             <option value="">Tüm dersler</option>
             {subjects.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
           </select>
+          <select data-testid="qb-topic" value={f.topic_id} onChange={(e) => set("topic_id", e.target.value)} className={selCls} disabled={!topics.length}>
+            <option value="">Tüm konular</option>
+            {topics.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
+          </select>
           <div className="flex gap-1.5">
             {DIFFS.map(([v, l]) => (
               <button key={v} onClick={() => set("difficulty", v)} data-testid={`qb-diff-${v || "all"}`}
@@ -120,6 +139,7 @@ export default function QuestionBank() {
           </select>
         </div>
       </Card>
+
 
       {data === null ? <Spinner /> : data.items.length === 0 ? <Empty text="Bu filtreye uygun soru bulunamadı." /> : (
         <>

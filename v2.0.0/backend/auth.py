@@ -15,7 +15,7 @@ REFRESH_DAYS = 7
 
 
 def get_jwt_secret() -> str:
-    return os.environ.get("JWT_SECRET", "supersecret_jwt_key_development_netor_2026")
+    return os.environ.get("JWT_SECRET", "supersecret_jwt_key_development_hedefmatik_2026")
 
 
 def hash_password(password: str) -> str:

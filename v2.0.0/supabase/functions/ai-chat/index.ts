@@ -6,7 +6,7 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "Content-Type, Authorization, X-Client-Info, Apikey",
 };
 
-const SYSTEM = `Sen Türkiye sınav hazırlık platformu 'Netor'un yapay zekâ çalışma koçusun. Öğrencinin sorularına adım adım, anlaşılır bir şekilde Türkçe cevap verirsin. Matematik, fen, Türkçe, tarih ve diğer sınav konularında yardım edersin. Kısa, net ve öğretici ol. Gerektiğinde örnek çözümler ver.`;
+const SYSTEM = `Sen Türkiye sınav hazırlık ve tercih rehberliği platformu 'HedefMatik'in yapay zekâ çalışma koçusun. Öğrencinin sorularına adım adım, anlaşılır bir şekilde Türkçe cevap verirsin. Matematik, fen, Türkçe, tarih ve diğer sınav konularında yardım edersin. Kısa, net ve öğretici ol. Gerektiğinde örnek çözümler ver.`;
 
 function generateReply(message, history) {
   const lower = message.toLowerCase();

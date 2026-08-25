@@ -49,7 +49,7 @@ export default function Onboarding() {
       <div className="mx-auto max-w-3xl px-5 sm:px-8 py-12">
         <div className="flex items-center gap-2 mb-12">
           <span className="h-8 w-8 rounded-lg bg-subject-matematik grid place-items-center"><Sparkles size={16} className="text-white" /></span>
-          <span className="font-heading font-extrabold text-xl tracking-tight">Netor</span>
+          <span className="font-heading font-extrabold text-xl tracking-tight">HedefMatik</span>
         </div>
 
         <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.5, ease: EASE }}>

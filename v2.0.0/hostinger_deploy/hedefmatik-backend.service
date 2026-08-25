@@ -1,0 +1,15 @@
+[Unit]
+Description=HedefMatik FastAPI Backend Service (hedefmatik.com)
+After=network.target mysql.service
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/var/www/hedefmatik/backend
+ExecStart=/var/www/hedefmatik/backend/venv/bin/uvicorn server:app --host 127.0.0.1 --port 8001 --workers 4
+Restart=always
+RestartSec=5
+EnvironmentFile=/var/www/hedefmatik/backend/.env
+
+[Install]
+WantedBy=multi-user.target

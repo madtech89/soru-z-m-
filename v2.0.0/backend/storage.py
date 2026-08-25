@@ -2,7 +2,7 @@ import os
 from pathlib import Path
 
 UPLOAD_DIR = Path(os.environ.get("UPLOAD_DIR", Path(__file__).parent / "uploads"))
-APP_NAME = "netor"
+APP_NAME = "hedefmatik"
 
 MIME_TYPES = {
     "jpg": "image/jpeg",
