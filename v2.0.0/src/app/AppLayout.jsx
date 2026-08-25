@@ -325,178 +325,253 @@ export default function AppLayout() {
             </Link>
 
             <nav className="hidden md:flex items-center gap-0.5">
-              {/* Dashboard */}
-              <NavLink to="/app" end className={headerCls}><LayoutDashboard size={16} /> Dashboard</NavLink>
+              {user ? (
+                <>
+                  {/* Dashboard */}
+                  <NavLink to="/app" end className={headerCls}><LayoutDashboard size={16} /> Dashboard</NavLink>
 
-              {/* Sınavlar Mega Dropdown */}
-              <div
-                className="relative"
-                onMouseEnter={() => handleMouseEnter("sinavlar")}
-                onMouseLeave={handleMouseLeave}
-              >
-                <button
-                  type="button"
-                  onClick={() => setOpenMenu((m) => (m === "sinavlar" ? null : "sinavlar"))}
-                  className={`flex items-center gap-1.5 px-3 py-2 rounded-xl text-sm font-semibold transition-all ${
-                    openMenu === "sinavlar"
-                      ? "bg-zinc-100 text-subject-matematik"
-                      : "text-zinc-600 hover:text-ink hover:bg-zinc-100/70"
-                  }`}
-                >
-                  <GraduationCap size={16} /> Sınavlar
-                  <ChevronDown size={13} className={`transition-transform duration-200 ${openMenu === "sinavlar" ? "rotate-180 text-subject-matematik" : "text-zinc-400"}`} />
-                </button>
-
-                <AnimatePresence>
-                  {openMenu === "sinavlar" && (
-                    <AppSınavlarMenu exams={exams} onClose={() => setOpenMenu(null)} />
-                  )}
-                </AnimatePresence>
-              </div>
-
-              {/* Denemeler */}
-              <NavLink to="/app/denemeler" className={headerCls}><FileText size={16} /> Denemeler</NavLink>
-
-              {/* Dersler Mega Dropdown */}
-              <div
-                className="relative"
-                onMouseEnter={() => handleMouseEnter("dersler")}
-                onMouseLeave={handleMouseLeave}
-              >
-                <button
-                  type="button"
-                  onClick={() => setOpenMenu((m) => (m === "dersler" ? null : "dersler"))}
-                  className={`flex items-center gap-1.5 px-3 py-2 rounded-xl text-sm font-semibold transition-all ${
-                    openMenu === "dersler"
-                      ? "bg-zinc-100 text-subject-matematik"
-                      : "text-zinc-600 hover:text-ink hover:bg-zinc-100/70"
-                  }`}
-                >
-                  <BookCopy size={16} /> Dersler
-                  <ChevronDown size={13} className={`transition-transform duration-200 ${openMenu === "dersler" ? "rotate-180 text-subject-matematik" : "text-zinc-400"}`} />
-                </button>
-
-                <AnimatePresence>
-                  {openMenu === "dersler" && (
-                    <AppDerslerMenu onClose={() => setOpenMenu(null)} />
-                  )}
-                </AnimatePresence>
-              </div>
-
-              {/* Araclar dropdown */}
-              <div
-                className="relative"
-                onMouseEnter={() => handleMouseEnter("araclar")}
-                onMouseLeave={handleMouseLeave}
-              >
-                <button
-                  type="button"
-                  onClick={() => setOpenMenu((m) => (m === "araclar" ? null : "araclar"))}
-                  className={`flex items-center gap-1.5 px-3 py-2 rounded-xl text-sm font-semibold transition-all ${
-                    openMenu === "araclar"
-                      ? "bg-zinc-100 text-subject-matematik"
-                      : "text-zinc-600 hover:text-ink hover:bg-zinc-100/70"
-                  }`}
-                >
-                  <Calculator size={16} /> Araçlar
-                  <ChevronDown size={13} className={`transition-transform duration-200 ${openMenu === "araclar" ? "rotate-180 text-subject-matematik" : "text-zinc-400"}`} />
-                </button>
-
-                <AnimatePresence>
-                  {openMenu === "araclar" && (
-                    <motion.div
-                      initial={{ opacity: 0, y: 8, scale: 0.98 }}
-                      animate={{ opacity: 1, y: 0, scale: 1 }}
-                      exit={{ opacity: 0, y: 6, scale: 0.98 }}
-                      transition={{ duration: 0.18 }}
-                      className="absolute top-full left-0 mt-2 w-56 bg-white rounded-2xl border border-zinc-200 shadow-2xl p-2 z-50"
+                  {/* Sınavlar Mega Dropdown */}
+                  <div
+                    className="relative"
+                    onMouseEnter={() => handleMouseEnter("sinavlar")}
+                    onMouseLeave={handleMouseLeave}
+                  >
+                    <button
+                      type="button"
+                      onClick={() => setOpenMenu((m) => (m === "sinavlar" ? null : "sinavlar"))}
+                      className={`flex items-center gap-1.5 px-3 py-2 rounded-xl text-sm font-semibold transition-all ${
+                        openMenu === "sinavlar"
+                          ? "bg-zinc-100 text-subject-matematik"
+                          : "text-zinc-600 hover:text-ink hover:bg-zinc-100/70"
+                      }`}
                     >
-                      <DropdownLink to="/app/puan-hesapla" onClick={() => setOpenMenu(null)}>
-                        <div className="flex items-center gap-2">
-                          <Calculator size={15} className="text-subject-matematik" />
-                          <div>
-                            <div className="font-bold text-xs">Puan Hesapla</div>
-                            <div className="text-[10px] text-zinc-400">Tüm sınavlar için canlı hesaplama</div>
-                          </div>
-                        </div>
-                      </DropdownLink>
-                      <DropdownLink to="/app/tercih-robotu" onClick={() => setOpenMenu(null)}>
-                        <div className="flex items-center gap-2">
-                          <Compass size={15} className="text-subject-fen" />
-                          <div>
-                            <div className="font-bold text-xs">Tercih Robotu</div>
-                            <div className="text-[10px] text-zinc-400">81 il üniversite ve taban puanlar</div>
-                          </div>
-                        </div>
-                      </DropdownLink>
-                      <DropdownLink to="/app/geri-sayim" onClick={() => setOpenMenu(null)}>
-                        <div className="flex items-center gap-2">
-                          <Clock size={15} className="text-subject-turkce" />
-                          <div>
-                            <div className="font-bold text-xs">Geri Sayım</div>
-                            <div className="text-[10px] text-zinc-400">ÖSYM & MEB sınav takvim sayacı</div>
-                          </div>
-                        </div>
-                      </DropdownLink>
-                    </motion.div>
-                  )}
-                </AnimatePresence>
-              </div>
+                      <GraduationCap size={16} /> Sınavlar
+                      <ChevronDown size={13} className={`transition-transform duration-200 ${openMenu === "sinavlar" ? "rotate-180 text-subject-matematik" : "text-zinc-400"}`} />
+                    </button>
 
-              {/* AI Dropdown */}
-              <div
-                className="relative"
-                onMouseEnter={() => handleMouseEnter("ai")}
-                onMouseLeave={handleMouseLeave}
-              >
-                <button
-                  type="button"
-                  onClick={() => setOpenMenu((m) => (m === "ai" ? null : "ai"))}
-                  className={`flex items-center gap-1.5 px-3 py-2 rounded-xl text-sm font-semibold transition-all ${
-                    openMenu === "ai"
-                      ? "bg-zinc-100 text-subject-matematik"
-                      : "text-zinc-600 hover:text-ink hover:bg-zinc-100/70"
-                  }`}
-                >
-                  <Brain size={16} /> AI Asistan
-                  <ChevronDown size={13} className={`transition-transform duration-200 ${openMenu === "ai" ? "rotate-180 text-subject-matematik" : "text-zinc-400"}`} />
-                </button>
+                    <AnimatePresence>
+                      {openMenu === "sinavlar" && (
+                        <AppSınavlarMenu exams={exams} onClose={() => setOpenMenu(null)} />
+                      )}
+                    </AnimatePresence>
+                  </div>
 
-                <AnimatePresence>
-                  {openMenu === "ai" && (
-                    <motion.div
-                      initial={{ opacity: 0, y: 8, scale: 0.98 }}
-                      animate={{ opacity: 1, y: 0, scale: 1 }}
-                      exit={{ opacity: 0, y: 6, scale: 0.98 }}
-                      transition={{ duration: 0.18 }}
-                      className="absolute top-full left-0 mt-2 w-52 bg-white rounded-2xl border border-zinc-200 shadow-2xl p-2 z-50"
+                  {/* Denemeler */}
+                  <NavLink to="/app/denemeler" className={headerCls}><FileText size={16} /> Denemeler</NavLink>
+
+                  {/* Dersler Mega Dropdown */}
+                  <div
+                    className="relative"
+                    onMouseEnter={() => handleMouseEnter("dersler")}
+                    onMouseLeave={handleMouseLeave}
+                  >
+                    <button
+                      type="button"
+                      onClick={() => setOpenMenu((m) => (m === "dersler" ? null : "dersler"))}
+                      className={`flex items-center gap-1.5 px-3 py-2 rounded-xl text-sm font-semibold transition-all ${
+                        openMenu === "dersler"
+                          ? "bg-zinc-100 text-subject-matematik"
+                          : "text-zinc-600 hover:text-ink hover:bg-zinc-100/70"
+                      }`}
                     >
-                      <DropdownLink to="/app/ai-koc" onClick={() => setOpenMenu(null)}>
-                        <div className="flex items-center gap-2">
-                          <Brain size={15} className="text-subject-matematik" />
-                          <div>
-                            <div className="font-bold text-xs">AI Koç</div>
-                            <div className="text-[10px] text-zinc-400">Kişiselleştirilmiş analiz</div>
-                          </div>
-                        </div>
-                      </DropdownLink>
-                      <DropdownLink to="/app/ai-sohbet" onClick={() => setOpenMenu(null)}>
-                        <div className="flex items-center gap-2">
-                          <MessageSquare size={15} className="text-subject-fen" />
-                          <div>
-                            <div className="font-bold text-xs">AI Sohbet</div>
-                            <div className="text-[10px] text-zinc-400">7/24 soru ve konu danışmanı</div>
-                          </div>
-                        </div>
-                      </DropdownLink>
-                    </motion.div>
-                  )}
-                </AnimatePresence>
-              </div>
+                      <BookCopy size={16} /> Dersler
+                      <ChevronDown size={13} className={`transition-transform duration-200 ${openMenu === "dersler" ? "rotate-180 text-subject-matematik" : "text-zinc-400"}`} />
+                    </button>
 
-              {/* Diger */}
-              <NavLink to="/app/siralama" className={headerCls}><Trophy size={16} /> Sıralama</NavLink>
-              <NavLink to="/app/rozetler" className={headerCls}><Award size={16} /> Rozetler</NavLink>
+                    <AnimatePresence>
+                      {openMenu === "dersler" && (
+                        <AppDerslerMenu onClose={() => setOpenMenu(null)} />
+                      )}
+                    </AnimatePresence>
+                  </div>
+
+                  {/* Araclar dropdown */}
+                  <div
+                    className="relative"
+                    onMouseEnter={() => handleMouseEnter("araclar")}
+                    onMouseLeave={handleMouseLeave}
+                  >
+                    <button
+                      type="button"
+                      onClick={() => setOpenMenu((m) => (m === "araclar" ? null : "araclar"))}
+                      className={`flex items-center gap-1.5 px-3 py-2 rounded-xl text-sm font-semibold transition-all ${
+                        openMenu === "araclar"
+                          ? "bg-zinc-100 text-subject-matematik"
+                          : "text-zinc-600 hover:text-ink hover:bg-zinc-100/70"
+                      }`}
+                    >
+                      <Calculator size={16} /> Araçlar
+                      <ChevronDown size={13} className={`transition-transform duration-200 ${openMenu === "araclar" ? "rotate-180 text-subject-matematik" : "text-zinc-400"}`} />
+                    </button>
+
+                    <AnimatePresence>
+                      {openMenu === "araclar" && (
+                        <motion.div
+                          initial={{ opacity: 0, y: 8, scale: 0.98 }}
+                          animate={{ opacity: 1, y: 0, scale: 1 }}
+                          exit={{ opacity: 0, y: 6, scale: 0.98 }}
+                          transition={{ duration: 0.18 }}
+                          className="absolute top-full left-0 mt-2 w-56 bg-white rounded-2xl border border-zinc-200 shadow-2xl p-2 z-50"
+                        >
+                          <DropdownLink to="/app/puan-hesapla" onClick={() => setOpenMenu(null)}>
+                            <div className="flex items-center gap-2">
+                              <Calculator size={15} className="text-subject-matematik" />
+                              <div>
+                                <div className="font-bold text-xs">Puan Hesapla</div>
+                                <div className="text-[10px] text-zinc-400">Tüm sınavlar için canlı hesaplama</div>
+                              </div>
+                            </div>
+                          </DropdownLink>
+                          <DropdownLink to="/app/tercih-robotu" onClick={() => setOpenMenu(null)}>
+                            <div className="flex items-center gap-2">
+                              <Compass size={15} className="text-subject-fen" />
+                              <div>
+                                <div className="font-bold text-xs">Tercih Robotu</div>
+                                <div className="text-[10px] text-zinc-400">81 il üniversite ve taban puanlar</div>
+                              </div>
+                            </div>
+                          </DropdownLink>
+                          <DropdownLink to="/app/geri-sayim" onClick={() => setOpenMenu(null)}>
+                            <div className="flex items-center gap-2">
+                              <Clock size={15} className="text-subject-turkce" />
+                              <div>
+                                <div className="font-bold text-xs">Geri Sayım</div>
+                                <div className="text-[10px] text-zinc-400">ÖSYM & MEB sınav takvim sayacı</div>
+                              </div>
+                            </div>
+                          </DropdownLink>
+                        </motion.div>
+                      )}
+                    </AnimatePresence>
+                  </div>
+
+                  {/* AI Dropdown */}
+                  <div
+                    className="relative"
+                    onMouseEnter={() => handleMouseEnter("ai")}
+                    onMouseLeave={handleMouseLeave}
+                  >
+                    <button
+                      type="button"
+                      onClick={() => setOpenMenu((m) => (m === "ai" ? null : "ai"))}
+                      className={`flex items-center gap-1.5 px-3 py-2 rounded-xl text-sm font-semibold transition-all ${
+                        openMenu === "ai"
+                          ? "bg-zinc-100 text-subject-matematik"
+                          : "text-zinc-600 hover:text-ink hover:bg-zinc-100/70"
+                      }`}
+                    >
+                      <Brain size={16} /> AI Asistan
+                      <ChevronDown size={13} className={`transition-transform duration-200 ${openMenu === "ai" ? "rotate-180 text-subject-matematik" : "text-zinc-400"}`} />
+                    </button>
+
+                    <AnimatePresence>
+                      {openMenu === "ai" && (
+                        <motion.div
+                          initial={{ opacity: 0, y: 8, scale: 0.98 }}
+                          animate={{ opacity: 1, y: 0, scale: 1 }}
+                          exit={{ opacity: 0, y: 6, scale: 0.98 }}
+                          transition={{ duration: 0.18 }}
+                          className="absolute top-full left-0 mt-2 w-52 bg-white rounded-2xl border border-zinc-200 shadow-2xl p-2 z-50"
+                        >
+                          <DropdownLink to="/app/ai-koc" onClick={() => setOpenMenu(null)}>
+                            <div className="flex items-center gap-2">
+                              <Brain size={15} className="text-subject-matematik" />
+                              <div>
+                                <div className="font-bold text-xs">AI Koç</div>
+                                <div className="text-[10px] text-zinc-400">Kişiselleştirilmiş analiz</div>
+                              </div>
+                            </div>
+                          </DropdownLink>
+                          <DropdownLink to="/app/ai-sohbet" onClick={() => setOpenMenu(null)}>
+                            <div className="flex items-center gap-2">
+                              <MessageSquare size={15} className="text-subject-fen" />
+                              <div>
+                                <div className="font-bold text-xs">AI Sohbet</div>
+                                <div className="text-[10px] text-zinc-400">7/24 soru ve konu danışmanı</div>
+                              </div>
+                            </div>
+                          </DropdownLink>
+                        </motion.div>
+                      )}
+                    </AnimatePresence>
+                  </div>
+
+                  {/* Sıralama & Rozetler */}
+                  <NavLink to="/app/siralama" className={headerCls}><Trophy size={16} /> Sıralama</NavLink>
+                  <NavLink to="/app/rozetler" className={headerCls}><Award size={16} /> Rozetler</NavLink>
+                </>
+              ) : (
+                <>
+                  {/* Giriş Yapmamış Ziyaretçiler İçin Açık Menü */}
+                  {/* Sınavlar Mega Dropdown */}
+                  <div
+                    className="relative"
+                    onMouseEnter={() => handleMouseEnter("sinavlar")}
+                    onMouseLeave={handleMouseLeave}
+                  >
+                    <button
+                      type="button"
+                      onClick={() => setOpenMenu((m) => (m === "sinavlar" ? null : "sinavlar"))}
+                      className={`flex items-center gap-1.5 px-3 py-2 rounded-xl text-sm font-semibold transition-all ${
+                        openMenu === "sinavlar"
+                          ? "bg-zinc-100 text-subject-matematik"
+                          : "text-zinc-600 hover:text-ink hover:bg-zinc-100/70"
+                      }`}
+                    >
+                      <GraduationCap size={16} /> Sınavlar
+                      <ChevronDown size={13} className={`transition-transform duration-200 ${openMenu === "sinavlar" ? "rotate-180 text-subject-matematik" : "text-zinc-400"}`} />
+                    </button>
+
+                    <AnimatePresence>
+                      {openMenu === "sinavlar" && (
+                        <AppSınavlarMenu exams={exams} onClose={() => setOpenMenu(null)} />
+                      )}
+                    </AnimatePresence>
+                  </div>
+
+                  {/* Dersler Mega Dropdown */}
+                  <div
+                    className="relative"
+                    onMouseEnter={() => handleMouseEnter("dersler")}
+                    onMouseLeave={handleMouseLeave}
+                  >
+                    <button
+                      type="button"
+                      onClick={() => setOpenMenu((m) => (m === "dersler" ? null : "dersler"))}
+                      className={`flex items-center gap-1.5 px-3 py-2 rounded-xl text-sm font-semibold transition-all ${
+                        openMenu === "dersler"
+                          ? "bg-zinc-100 text-subject-matematik"
+                          : "text-zinc-600 hover:text-ink hover:bg-zinc-100/70"
+                      }`}
+                    >
+                      <BookCopy size={16} /> Dersler
+                      <ChevronDown size={13} className={`transition-transform duration-200 ${openMenu === "dersler" ? "rotate-180 text-subject-matematik" : "text-zinc-400"}`} />
+                    </button>
+
+                    <AnimatePresence>
+                      {openMenu === "dersler" && (
+                        <AppDerslerMenu onClose={() => setOpenMenu(null)} />
+                      )}
+                    </AnimatePresence>
+                  </div>
+
+                  <NavLink to="/app/puan-hesapla" className={headerCls}>
+                    <Calculator size={15} /> Puan Hesapla
+                  </NavLink>
+
+                  <NavLink to="/app/tercih-robotu" className={headerCls}>
+                    <Compass size={15} /> Tercih Robotu
+                  </NavLink>
+
+                  <NavLink to="/app/geri-sayim" className={headerCls}>
+                    <Clock size={15} /> Geri Sayım
+                  </NavLink>
+
+                  <NavLink to="/blog" className={headerCls}>
+                    <BookOpen size={15} /> Blog & Rehberlik
+                  </NavLink>
+                </>
+              )}
             </nav>
           </div>
 
@@ -517,7 +592,7 @@ export default function AppLayout() {
                     {credits} Kredi
                   </NavLink>
                 )}
-                <NavLink to="/app/profil" className={`hidden md:flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm font-medium hover:bg-black/5 transition-colors ${user?.role === "admin" ? "" : ""}`}>
+                <NavLink to="/app/profil" className="hidden md:flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm font-medium hover:bg-black/5 transition-colors">
                   <div className="h-7 w-7 rounded-full bg-subject-matematik/15 grid place-items-center font-heading font-bold text-subject-matematik text-xs">
                     {(user?.name || "U").charAt(0).toUpperCase()}
                   </div>
@@ -534,8 +609,10 @@ export default function AppLayout() {
               </>
             ) : (
               <>
-                <NavLink to="/login" className="hidden md:inline-flex text-sm font-medium px-4 py-2 rounded-lg text-zinc-600 hover:bg-black/5 transition-colors">Giriş</NavLink>
-                <NavLink to="/onboarding" className="hidden md:inline-flex text-sm font-semibold px-4 py-2 rounded-lg bg-ink text-white hover:bg-subject-matematik transition-colors">Ücretsiz Başla</NavLink>
+                <Link to="/login" className="hidden sm:inline-flex text-sm font-semibold px-4 py-2 rounded-full text-zinc-700 hover:bg-black/5 transition-colors">Giriş</Link>
+                <Link to="/onboarding" className="group text-sm font-semibold px-5 py-2.5 rounded-full bg-ink text-white flex items-center gap-1.5 hover:bg-subject-matematik transition-colors shadow-sm">
+                  Ücretsiz Başla
+                </Link>
               </>
             )}
             <button onClick={() => setMenu(true)} className="md:hidden p-2 rounded-lg text-zinc-700 hover:bg-zinc-100"><Menu size={22} /></button>
@@ -569,50 +646,67 @@ export default function AppLayout() {
           <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="md:hidden fixed inset-0 z-50 bg-black/40" onClick={() => setMenu(false)}>
             <motion.div initial={{ x: "100%" }} animate={{ x: 0 }} exit={{ x: "100%" }} transition={{ type: "tween", duration: 0.28 }} onClick={(e) => e.stopPropagation()} className="absolute right-0 top-0 bottom-0 w-72 bg-white p-5 overflow-auto">
               <div className="flex items-center justify-between mb-6">
-                <span className="font-heading font-extrabold text-lg">Menu</span>
+                <span className="font-heading font-extrabold text-lg">Menü</span>
                 <button onClick={() => setMenu(false)}><X size={22} className="text-zinc-400" /></button>
               </div>
               <nav className="space-y-1">
                 <Link to="/" onClick={() => setMenu(false)} className={linkCls}>
                   <Home size={18} /> Ana Sayfa
                 </Link>
-                {[
-                  ["/app", "Dashboard", LayoutDashboard, true],
-                  ["/app/sinavlar", "Sinavlar", GraduationCap, false],
-                  ["/app/denemeler", "Denemeler", FileText, false],
-                  ["/app/soru-bankasi", "Soru Bankasi", Library, false],
-                  ["/app/ders-notlari", "Ders Notlari", BookOpen, false],
-                  ["/app/eksiklerim", "Eksiklerim", Target, false],
-                  ["/app/puan-hesapla", "Puan Hesapla", Calculator, false],
-                  ["/app/tercih-robotu", "Tercih Robotu", Compass, false],
-                  ["/app/geri-sayim", "Geri Sayim", Clock, false],
-                  ["/app/siralama", "Siralama", Trophy, false],
-                  ["/app/ai-koc", "AI Koc", Brain, false],
-                  ["/app/ai-sohbet", "AI Sohbet", MessageSquare, false],
-                  ["/app/rozetler", "Rozetler", Award, false],
-                  ["/app/profil", "Profil", User, false],
-                ].map(([to, label, Icon, end]) => (
-                  <NavLink key={to} to={to} end={end} onClick={() => setMenu(false)} className={linkCls}>
-                    <Icon size={18} /> {label}
-                  </NavLink>
-                ))}
-                {user?.role === "admin" && (
-                  <NavLink to="/app/admin" onClick={() => setMenu(false)} className={linkCls}>
-                    <ShieldCheck size={18} /> Admin
-                  </NavLink>
-                )}
+
                 {user ? (
-                  <button onClick={doLogout} className="flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-sm font-medium text-subject-turkce w-full mt-2">
-                    <LogOut size={18} /> Cikis yap
-                  </button>
+                  <>
+                    {[
+                      ["/app", "Dashboard", LayoutDashboard, true],
+                      ["/app/sinavlar", "Sınavlar", GraduationCap, false],
+                      ["/app/denemeler", "Denemeler", FileText, false],
+                      ["/app/soru-bankasi", "Soru Bankası", Library, false],
+                      ["/app/ders-notlari", "Ders Notları", BookOpen, false],
+                      ["/app/eksiklerim", "Eksiklerim", Target, false],
+                      ["/app/puan-hesapla", "Puan Hesapla", Calculator, false],
+                      ["/app/tercih-robotu", "Tercih Robotu", Compass, false],
+                      ["/app/geri-sayim", "Geri Sayım", Clock, false],
+                      ["/app/siralama", "Sıralama", Trophy, false],
+                      ["/app/ai-koc", "AI Koç", Brain, false],
+                      ["/app/ai-sohbet", "AI Sohbet", MessageSquare, false],
+                      ["/app/rozetler", "Rozetler", Award, false],
+                      ["/app/profil", "Profil", User, false],
+                    ].map(([to, label, Icon, end]) => (
+                      <NavLink key={to} to={to} end={end} onClick={() => setMenu(false)} className={linkCls}>
+                        <Icon size={18} /> {label}
+                      </NavLink>
+                    ))}
+                    {user?.role === "admin" && (
+                      <NavLink to="/app/admin" onClick={() => setMenu(false)} className={linkCls}>
+                        <ShieldCheck size={18} /> Admin
+                      </NavLink>
+                    )}
+                    <button onClick={doLogout} className="flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-sm font-medium text-rose-600 w-full mt-3">
+                      <LogOut size={18} /> Çıkış Yap
+                    </button>
+                  </>
                 ) : (
                   <>
-                    <NavLink to="/login" onClick={() => setMenu(false)} className={linkCls}>
-                      <LogOut size={18} /> Giris yap
-                    </NavLink>
-                    <NavLink to="/onboarding" onClick={() => setMenu(false)} className="flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-sm font-medium bg-ink text-white mt-1">
-                      <Sparkles size={18} /> Ucretsiz basla
-                    </NavLink>
+                    {[
+                      ["/app/puan-hesapla", "Puan Hesapla", Calculator, false],
+                      ["/app/tercih-robotu", "Tercih Robotu", Compass, false],
+                      ["/app/geri-sayim", "Geri Sayım", Clock, false],
+                      ["/app/ders-notlari", "Ders Notları", BookOpen, false],
+                      ["/app/soru-bankasi", "Soru Bankası", Library, false],
+                      ["/blog", "Blog & Rehberlik", BookOpen, false],
+                    ].map(([to, label, Icon, end]) => (
+                      <NavLink key={to} to={to} end={end} onClick={() => setMenu(false)} className={linkCls}>
+                        <Icon size={18} /> {label}
+                      </NavLink>
+                    ))}
+                    <div className="pt-4 mt-4 border-t border-zinc-100 space-y-2">
+                      <Link to="/login" onClick={() => setMenu(false)} className="block w-full text-center py-2.5 rounded-xl border border-zinc-200 text-sm font-semibold text-zinc-700">
+                        Giriş Yap
+                      </Link>
+                      <Link to="/onboarding" onClick={() => setMenu(false)} className="block w-full text-center py-2.5 rounded-xl bg-ink text-white text-sm font-semibold shadow-sm">
+                        Ücretsiz Başla
+                      </Link>
+                    </div>
                   </>
                 )}
               </nav>
@@ -627,19 +721,35 @@ export default function AppLayout() {
         </div>
       </main>
 
-      <nav className="md:hidden fixed bottom-0 inset-x-0 z-40 bg-white border-t border-zinc-200 shadow-sm grid grid-cols-5 px-2 pt-2 pb-[max(0.5rem,env(safe-area-inset-bottom))]">
-        {[
-          { to: "/app", label: "Dashboard", icon: LayoutDashboard, end: true },
-          { to: "/app/denemeler", label: "Deneme", icon: FileText },
-          { to: "/app/soru-bankasi", label: "Sorular", icon: Library },
-          { to: "/app/geri-sayim", label: "Sayim", icon: Clock },
-          { to: "/app/profil", label: "Profil", icon: User },
-        ].map((n) => (
-          <NavLink key={n.to} to={n.to} end={n.end}
-            className={({ isActive }) => `flex flex-col items-center gap-1 py-1.5 rounded-lg text-[11px] font-medium ${isActive ? "text-subject-matematik" : "text-zinc-400"}`}>
-            <n.icon size={20} />{n.label}
-          </NavLink>
-        ))}
+      {/* Mobile Bottom Navigation */}
+      <nav className="md:hidden fixed bottom-0 inset-x-0 z-40 bg-white/95 backdrop-blur-md border-t border-zinc-200 shadow-sm grid grid-cols-5 px-2 pt-2 pb-[max(0.5rem,env(safe-area-inset-bottom))]">
+        {user ? (
+          [
+            { to: "/app", label: "Dashboard", icon: LayoutDashboard, end: true },
+            { to: "/app/denemeler", label: "Deneme", icon: FileText },
+            { to: "/app/soru-bankasi", label: "Sorular", icon: Library },
+            { to: "/app/geri-sayim", label: "Sayım", icon: Clock },
+            { to: "/app/profil", label: "Profil", icon: User },
+          ].map((n) => (
+            <NavLink key={n.to} to={n.to} end={n.end}
+              className={({ isActive }) => `flex flex-col items-center gap-1 py-1.5 rounded-lg text-[11px] font-medium ${isActive ? "text-subject-matematik" : "text-zinc-400"}`}>
+              <n.icon size={20} />{n.label}
+            </NavLink>
+          ))
+        ) : (
+          [
+            { to: "/", label: "Ana Sayfa", icon: Home, end: true },
+            { to: "/app/puan-hesapla", label: "Puan", icon: Calculator },
+            { to: "/app/tercih-robotu", label: "Tercih", icon: Compass },
+            { to: "/app/geri-sayim", label: "Geri Sayım", icon: Clock },
+            { to: "/login", label: "Giriş", icon: User },
+          ].map((n) => (
+            <NavLink key={n.to} to={n.to} end={n.end}
+              className={({ isActive }) => `flex flex-col items-center gap-1 py-1.5 rounded-lg text-[11px] font-medium ${isActive ? "text-subject-matematik" : "text-zinc-400"}`}>
+              <n.icon size={20} />{n.label}
+            </NavLink>
+          ))
+        )}
       </nav>
     </div>
   );
