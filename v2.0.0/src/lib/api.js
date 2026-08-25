@@ -65,9 +65,6 @@ export async function fetchExamScoring(examId) {
   return res.data?.scoring_config || { sections: [], base_score: 100, multiplier: 1, score_type: "Ham Puan" };
 }
 
-export async function saveExamScoring(examId, config) {
-  // admin endpoint or exam update
-}
 
 export async function fetchSubjects(examId) {
   const res = await api.get(`/exams/${examId}/subjects`);
