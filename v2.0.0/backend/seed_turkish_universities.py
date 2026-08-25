@@ -15,21 +15,10 @@ sys.path.insert(0, str(ROOT_DIR))
 from dotenv import load_dotenv
 load_dotenv(ROOT_DIR / ".env")
 
-from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
-from sqlalchemy.orm import sessionmaker
 from sqlalchemy import delete
+from database import AsyncSessionLocal, init_models, engine
 import models as M
 from seed import now_iso
-
-DB_HOST = os.getenv("DB_HOST", "127.0.0.1")
-DB_PORT = os.getenv("DB_PORT", "3306")
-DB_USER = os.getenv("DB_USER", "root")
-DB_PASSWORD = os.getenv("DB_PASSWORD", "")
-DB_NAME = os.getenv("DB_NAME", "hedefmatik_db")
-DB_URL = f"mysql+aiomysql://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{DB_NAME}?charset=utf8mb4"
-
-engine = create_async_engine(DB_URL, pool_recycle=3600)
-AsyncSessionLocal = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
 
 # ── TÜM 81 İL VE ÜNİVERSİTE LİSTESİ ──
 TURKEY_CITIES_UNIVERSITIES = {
@@ -262,6 +251,7 @@ KPSS_PLACEMENTS = [
 async def generate_massive_dataset():
     """Tüm 81 ili, tüm üniversiteleri, LGS liselerini ve KPSS atamalarını veritabanına kaydeder."""
     print("🌱 Kapsamlı Türkiye Tercih Veritabanı (81 İl + LGS + KPSS + DGS + YKS) oluşturuluyor...")
+    await init_models()
     
     async with AsyncSessionLocal() as session:
         await session.execute(delete(M.UniversityProgram))

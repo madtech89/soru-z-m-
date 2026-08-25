@@ -9,7 +9,7 @@ SSH_PORT="65002"
 SSH_USER="u341740237"
 SSH_KEY="$HOME/.ssh/id_ed25519_hedefmatik"
 REMOTE_TARGET="/home/u341740237/domains/hedefmatik.com/public_html"
-BACKEND_TARGET="/home/u341740237/backend"
+BACKEND_TARGET="/home/u341740237/hedefmatik_backend"
 
 echo "====================================================="
 echo "🚀 HedefMatik Canlı Dağıtım (Deploy to Live) Başlatılıyor..."
@@ -29,7 +29,7 @@ scp -i "${SSH_KEY}" -P ${SSH_PORT} -o StrictHostKeyChecking=no -r ./dist/* "${SS
 
 # 3. Backend Dosyalarını Senkronize Et
 echo "⚙️ 3/3 Backend dosyaları senkronize ediliyor..."
-rsync -avz --exclude 'venv' --exclude '__pycache__' --exclude '*.pyc' --exclude 'uploads' -e "ssh -i ${SSH_KEY} -p ${SSH_PORT} -o StrictHostKeyChecking=no" ./backend/ "${SSH_USER}@${SSH_HOST}:${BACKEND_TARGET}/" || true
+rsync -avz --exclude '.env*' --exclude 'venv' --exclude '__pycache__' --exclude '*.pyc' --exclude 'uploads' -e "ssh -i ${SSH_KEY} -p ${SSH_PORT} -o StrictHostKeyChecking=no" ./backend/ "${SSH_USER}@${SSH_HOST}:${BACKEND_TARGET}/" || true
 
 echo "====================================================="
 echo "✅ HedefMatik.com başarıyla canlıya güncellendi!"

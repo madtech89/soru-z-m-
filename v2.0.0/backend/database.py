@@ -4,20 +4,46 @@ from dotenv import load_dotenv
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession
 from sqlalchemy.orm import declarative_base
 import pymysql
+import pymysql.connections
+
+# Support Turkish/Unicode characters in MySQL passwords for PyMySQL & aiomysql
+orig_pymysql_init = pymysql.connections.Connection.__init__
+def _patched_pymysql_init(self, *args, **kwargs):
+    if 'password' in kwargs and isinstance(kwargs['password'], str):
+        try:
+            kwargs['password'].encode('latin1')
+        except UnicodeEncodeError:
+            kwargs['password'] = kwargs['password'].encode('utf-8')
+    orig_pymysql_init(self, *args, **kwargs)
+pymysql.connections.Connection.__init__ = _patched_pymysql_init
+
+try:
+    import aiomysql.connection
+    orig_req_auth = aiomysql.connection.Connection._request_authentication
+    async def _patched_req_auth(self):
+        if isinstance(self._password, str):
+            try:
+                self._password.encode('latin1')
+            except UnicodeEncodeError:
+                self._password = self._password.encode('utf-8').decode('latin1')
+        return await orig_req_auth(self)
+    aiomysql.connection.Connection._request_authentication = _patched_req_auth
+except Exception:
+    pass
 
 ROOT_DIR = Path(__file__).parent
-load_dotenv(ROOT_DIR / ".env")
-
-MYSQL_URL = os.environ.get(
-    "MYSQL_URL",
-    "mysql+aiomysql://root:@127.0.0.1:3306/hedefmatik_db?charset=utf8mb4"
-)
+load_dotenv(ROOT_DIR / ".env", override=True)
 
 DB_NAME = os.environ.get("DB_NAME", "hedefmatik_db")
 DB_USER = os.environ.get("DB_USER", "root")
 DB_PASSWORD = os.environ.get("DB_PASSWORD", "")
 DB_HOST = os.environ.get("DB_HOST", "127.0.0.1")
 DB_PORT = int(os.environ.get("DB_PORT", 3306))
+
+if "MYSQL_URL" in os.environ and os.environ["MYSQL_URL"]:
+    MYSQL_URL = os.environ["MYSQL_URL"]
+else:
+    MYSQL_URL = f"mysql+aiomysql://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{DB_NAME}?charset=utf8mb4"
 
 engine = create_async_engine(
     MYSQL_URL,
@@ -61,9 +87,12 @@ def ensure_database_exists():
     )
     try:
         with conn.cursor() as cursor:
-            cursor.execute(
-                f"CREATE DATABASE IF NOT EXISTS `{DB_NAME}` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;"
-            )
+            try:
+                cursor.execute(
+                    f"CREATE DATABASE IF NOT EXISTS `{DB_NAME}` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;"
+                )
+            except Exception:
+                pass
             cursor.execute(f"USE `{DB_NAME}`;")
 
             # Auto-migrate users columns
@@ -114,5 +143,6 @@ def ensure_database_exists():
 
 async def init_models():
     ensure_database_exists()
+    import models
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)

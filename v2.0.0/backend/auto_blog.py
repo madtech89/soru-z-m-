@@ -22,24 +22,12 @@ from dotenv import load_dotenv
 load_dotenv(ROOT_DIR / ".env")
 
 import httpx
-from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
-from sqlalchemy.orm import sessionmaker
 from sqlalchemy import select, desc
+from database import AsyncSessionLocal
 import models as M
 from seed import now_iso
 
 logger = logging.getLogger("sinav.auto_blog")
-
-# ─── Veritabanı Kurulumu ──────────────────────────────────────────────────────
-DB_HOST = os.getenv("DB_HOST", "127.0.0.1")
-DB_PORT = os.getenv("DB_PORT", "3306")
-DB_USER = os.getenv("DB_USER", "root")
-DB_PASSWORD = os.getenv("DB_PASSWORD", "")
-DB_NAME = os.getenv("DB_NAME", "hedefmatik_db")
-DB_URL = f"mysql+aiomysql://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{DB_NAME}?charset=utf8mb4"
-
-engine = create_async_engine(DB_URL, pool_recycle=3600)
-AsyncSessionLocal = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
 
 
 # ─── Sıcak Gündem Haber Konuları / Havuz ──────────────────────────────────────

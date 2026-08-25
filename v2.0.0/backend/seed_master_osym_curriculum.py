@@ -9,7 +9,7 @@ import asyncio
 import uuid
 from datetime import datetime, timezone
 from sqlalchemy import select, delete
-from database import AsyncSessionLocal
+from database import AsyncSessionLocal, init_models
 import models as M
 
 
@@ -778,6 +778,7 @@ MASTER_CURRICULUM = [
 
 async def seed_master_curriculum():
     print("🚀 Master Müfredat ve Tüm Ulusal Sınavlar Tohumlayıcısı Başlatılıyor...")
+    await init_models()
     async with AsyncSessionLocal() as session:
         # 1. Hatalı ve sahte soruları, cevapları ve testleri temizle
         print("🧹 Hatalı/sahte sorular ve testler temizleniyor...")

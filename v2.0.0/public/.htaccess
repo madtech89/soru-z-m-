@@ -5,6 +5,10 @@
   RewriteEngine On
   RewriteBase /
 
+  # /api ve /uploads isteklerini yerel FastAPI backend'e yönlendir (Reverse Proxy)
+  RewriteRule ^api/(.*)$ http://127.0.0.1:8005/api/$1 [P,L]
+  RewriteRule ^uploads/(.*)$ http://127.0.0.1:8005/uploads/$1 [P,L]
+
   # HTTPS Yönlendirmesi (SSL Zorunlu)
   RewriteCond %{HTTPS} off
   RewriteRule ^(.*)$ https://%{HTTP_HOST}%{REQUEST_URI} [L,R=301]
@@ -13,9 +17,6 @@
   RewriteCond %{REQUEST_FILENAME} -f [OR]
   RewriteCond %{REQUEST_FILENAME} -d
   RewriteRule ^ - [L]
-
-  # /api ve /uploads istekleri backend proxy için (eğer aynı domain üzerinde yönlendiriliyorsa)
-  # RewriteRule ^api/(.*)$ http://127.0.0.1:8001/api/$1 [P,L]
 
   # Diğer tüm sayfa isteklerini React SPA index.html'e yönlendir (404 hatasını önler)
   RewriteRule ^ index.html [L]
