@@ -6,6 +6,7 @@ const API_BASE = "/api";
 const api = axios.create({
   baseURL: API_BASE,
   withCredentials: true,
+  timeout: 5000,
 });
 
 api.interceptors.request.use((config) => {
@@ -23,6 +24,12 @@ export function AuthProvider({ children }) {
   const [loading, setLoading] = useState(true);
 
   const refresh = useCallback(async () => {
+    const token = localStorage.getItem("token");
+    if (!token) {
+      setUser(false);
+      setLoading(false);
+      return;
+    }
     try {
       const res = await api.get("/auth/me");
       if (res.data?.user) {
@@ -39,6 +46,11 @@ export function AuthProvider({ children }) {
 
   useEffect(() => {
     refresh();
+    // Safety guard to guarantee loading is never stuck
+    const timer = setTimeout(() => {
+      setLoading(false);
+    }, 3000);
+    return () => clearTimeout(timer);
   }, [refresh]);
 
   const login = async (email, password) => {

@@ -9,6 +9,8 @@ import {
   ChevronDown, ChevronRight, Compass, Clock, BookCopy, Home, Zap,
 } from "lucide-react";
 
+import { DEFAULT_EXAMS } from "@/lib/api";
+
 function useClickOutside(ref, cb) {
   useEffect(() => {
     const handler = (e) => { if (ref.current && !ref.current.contains(e.target)) cb(); };
@@ -17,147 +19,201 @@ function useClickOutside(ref, cb) {
   }, [ref, cb]);
 }
 
-function Dropdown({ label, icon: Icon, children }) {
-  const [open, setOpen] = useState(false);
-  const ref = useRef(null);
-  useClickOutside(ref, () => setOpen(false));
-  return (
-    <div className="relative" ref={ref} onMouseEnter={() => setOpen(true)} onMouseLeave={() => setOpen(false)}>
-      <button
-        onClick={() => setOpen((o) => !o)}
-        className={`flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-medium transition-colors ${open ? "text-subject-matematik" : "text-zinc-600 hover:text-ink"}`}
-      >
-        {Icon && <Icon size={16} />}
-        {label}
-        <ChevronDown size={14} className={`transition-transform ${open ? "rotate-180" : ""}`} />
-      </button>
-      <AnimatePresence>
-        {open && (
-          <motion.div
-            initial={{ opacity: 0, y: -6 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: -6 }}
-            transition={{ duration: 0.15 }}
-            className="absolute top-full left-0 pt-1 w-60 bg-white rounded-2xl shadow-xl border border-zinc-100 py-2 z-50"
-          >
-            {children}
-          </motion.div>
-        )}
-      </AnimatePresence>
-    </div>
-  );
-}
+function AppSınavlarMenu({ exams, onClose }) {
+  const [activeCat, setActiveCat] = useState("universite");
 
-function CascadingSubjectItem({ examId, subject, basePath, topicCache, loadTopics }) {
-  const [subOpen, setSubOpen] = useState(false);
-  const key = `${examId}_${subject.id}`;
-  const topics = topicCache[key] || [];
+  const categories = [
+    { key: "universite", label: "Üniversite & Lisansüstü", icon: "🎓", badge: "YKS / ALES / DGS" },
+    { key: "kpss", label: "KPSS & Kariyer", icon: "💼", badge: "Lisans / Alan / Eğitim" },
+    { key: "saglik", label: "Sağlık & Tıp", icon: "🩺", badge: "TUS / DUS" },
+    { key: "mesleki", label: "Mesleki & Hukuk", icon: "⚖️", badge: "SMMM / Hakimlik" },
+    { key: "dil", label: "Yabancı Dil", icon: "🌍", badge: "YDS / YÖKDİL" },
+    { key: "ortaokul", label: "MEB & Lise Giriş", icon: "🎒", badge: "LGS / MSÜ" },
+  ];
+
+  const filteredExams = exams.filter((e) => {
+    if (activeCat === "ortaokul") return e.category === "ortaokul" || e.category === "askeri";
+    return e.category === activeCat;
+  });
 
   return (
-    <div
-      className="relative"
-      onMouseEnter={() => { setSubOpen(true); loadTopics(examId, subject.id); }}
-      onMouseLeave={() => setSubOpen(false)}
+    <motion.div
+      initial={{ opacity: 0, y: 8, scale: 0.98 }}
+      animate={{ opacity: 1, y: 0, scale: 1 }}
+      exit={{ opacity: 0, y: 6, scale: 0.98 }}
+      transition={{ duration: 0.18 }}
+      className="absolute top-full left-0 mt-2 w-[580px] max-w-[92vw] bg-white rounded-2xl border border-zinc-200 shadow-2xl p-3.5 z-50 overflow-hidden"
     >
-      <div className="flex items-center justify-between px-4 py-2 text-xs font-semibold text-zinc-700 hover:bg-zinc-50 cursor-pointer transition-colors">
-        <span className="truncate">{subject.name}</span>
-        <ChevronRight size={12} className={`text-zinc-400 transition-transform ${subOpen ? "rotate-90" : ""}`} />
-      </div>
-
-      {subOpen && (
-        <div className="absolute left-full top-0 pl-1 w-64 max-h-[75vh] overflow-y-auto rounded-2xl border border-zinc-200 bg-white py-2 shadow-2xl z-50">
-          <NavLink
-            to={`${basePath}?exam_id=${examId}&subject_id=${subject.id}`}
-            className="block px-4 py-1.5 text-xs font-bold text-ink hover:bg-zinc-50 border-b border-zinc-100 mb-1"
-          >
-            {subject.name} (Tümü)
-          </NavLink>
-          {topics.length === 0 ? (
-            <div className="px-4 py-2 text-[11px] text-zinc-400 italic">Konular yükleniyor...</div>
-          ) : (
-            topics.map((t) => (
-              <NavLink
-                key={t.id}
-                to={`${basePath}?exam_id=${examId}&subject_id=${subject.id}&topic_id=${t.id}`}
-                className="block px-4 py-1.5 text-[11px] text-zinc-600 hover:bg-subject-matematik/10 hover:text-subject-matematik truncate transition"
+      <div className="grid grid-cols-12 gap-3">
+        {/* Sol Kategori Listesi */}
+        <div className="col-span-5 bg-zinc-50 rounded-xl p-1.5 space-y-1 border border-zinc-100">
+          <div className="px-2.5 py-1 text-[10px] font-extrabold uppercase tracking-wider text-zinc-400">Kategoriler</div>
+          {categories.map((cat) => {
+            const isActive = activeCat === cat.key;
+            return (
+              <button
+                key={cat.key}
+                type="button"
+                onMouseEnter={() => setActiveCat(cat.key)}
+                onClick={() => setActiveCat(cat.key)}
+                className={`w-full flex items-center justify-between px-2.5 py-2 rounded-lg text-left transition-all ${
+                  isActive
+                    ? "bg-white text-ink shadow-sm border border-zinc-200 font-bold"
+                    : "text-zinc-600 hover:bg-white/60 hover:text-ink font-medium"
+                }`}
               >
-                {t.name}
-              </NavLink>
-            ))
-          )}
+                <div className="flex items-center gap-1.5 truncate">
+                  <span className="text-sm">{cat.icon}</span>
+                  <span className="text-xs truncate">{cat.label}</span>
+                </div>
+                <ChevronRight size={12} className={`shrink-0 transition-transform ${isActive ? "text-subject-matematik translate-x-0.5" : "text-zinc-300"}`} />
+              </button>
+            );
+          })}
         </div>
-      )}
-    </div>
+
+        {/* Sağ Sınav Listesi */}
+        <div className="col-span-7 flex flex-col justify-between pl-1">
+          <div>
+            <div className="flex items-center justify-between pb-1.5 mb-1.5 border-b border-zinc-100">
+              <span className="text-xs font-bold text-ink">
+                {categories.find((c) => c.key === activeCat)?.label} Sınavları
+              </span>
+              <span className="text-[11px] text-zinc-400 font-semibold">{filteredExams.length} Sınav</span>
+            </div>
+
+            <div className="space-y-1 max-h-[240px] overflow-y-auto pr-1">
+              {filteredExams.map((exam) => (
+                <div
+                  key={exam.id || exam.name}
+                  className="group flex items-center justify-between p-1.5 rounded-lg hover:bg-zinc-50 border border-transparent hover:border-zinc-200 transition-all"
+                >
+                  <div className="truncate mr-2">
+                    <div className="flex items-center gap-1.5">
+                      <span className="font-bold text-xs text-ink group-hover:text-subject-matematik transition-colors">{exam.name}</span>
+                      <span className="text-[9px] font-extrabold uppercase px-1.5 py-0.2 rounded bg-zinc-100 text-zinc-500">{exam.exam_type}</span>
+                    </div>
+                    <p className="text-[10px] text-zinc-400 truncate">{exam.description || "Resmi ÖSYM müfredatı & testler"}</p>
+                  </div>
+                  <div className="flex items-center gap-1 shrink-0">
+                    <NavLink
+                      to={`/app/soru-bankasi?exam_id=${exam.id}`}
+                      onClick={onClose}
+                      className="px-2 py-0.5 rounded bg-zinc-100 hover:bg-ink hover:text-white text-[10px] font-bold text-zinc-600 transition-colors"
+                      title="Soru Bankası"
+                    >
+                      Sorular
+                    </NavLink>
+                    <NavLink
+                      to={`/app/ders-notlari?exam_id=${exam.id}`}
+                      onClick={onClose}
+                      className="px-2 py-0.5 rounded bg-zinc-100 hover:bg-subject-matematik hover:text-white text-[10px] font-bold text-zinc-600 transition-colors"
+                      title="Ders Notları"
+                    >
+                      Notlar
+                    </NavLink>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div className="pt-2 mt-1.5 border-t border-zinc-100 flex items-center justify-between text-[11px]">
+            <NavLink to="/app/puan-hesapla" onClick={onClose} className="text-subject-matematik font-bold flex items-center gap-1 hover:underline">
+              <Calculator size={12} /> Puan Hesapla
+            </NavLink>
+            <NavLink to="/app/tercih-robotu" onClick={onClose} className="text-zinc-500 font-medium flex items-center gap-1 hover:text-ink">
+              <Compass size={12} /> Tercih Robotu &rarr;
+            </NavLink>
+          </div>
+        </div>
+      </div>
+    </motion.div>
   );
 }
 
-function CascadingExamItem({ exam, basePath, subjCache, loadSubjects, topicCache, loadTopics }) {
-  const [subOpen, setSubOpen] = useState(false);
-  const subjects = subjCache[exam.id] || [];
+function AppDerslerMenu({ onClose }) {
+  const popularSubjects = [
+    { name: "Temel Matematik", tag: "Mat-1", color: "bg-blue-50 text-blue-700" },
+    { name: "İleri Matematik & Geometri", tag: "Mat-2", color: "bg-indigo-50 text-indigo-700" },
+    { name: "Türkçe & Dil Bilgisi", tag: "Türkçe", color: "bg-emerald-50 text-emerald-700" },
+    { name: "Türk Dili ve Edebiyatı", tag: "Edebiyat", color: "bg-amber-50 text-amber-700" },
+    { name: "Fizik", tag: "Fen", color: "bg-purple-50 text-purple-700" },
+    { name: "Kimya", tag: "Fen", color: "bg-pink-50 text-pink-700" },
+    { name: "Biyoloji", tag: "Fen", color: "bg-teal-50 text-teal-700" },
+    { name: "Tarih & İnkılap", tag: "Sosyal", color: "bg-rose-50 text-rose-700" },
+    { name: "Coğrafya & Vatandaşlık", tag: "Sosyal", color: "bg-sky-50 text-sky-700" },
+  ];
 
   return (
-    <div
-      className="relative"
-      onMouseEnter={() => { setSubOpen(true); loadSubjects(exam.id); }}
-      onMouseLeave={() => setSubOpen(false)}
+    <motion.div
+      initial={{ opacity: 0, y: 8, scale: 0.98 }}
+      animate={{ opacity: 1, y: 0, scale: 1 }}
+      exit={{ opacity: 0, y: 6, scale: 0.98 }}
+      transition={{ duration: 0.18 }}
+      className="absolute top-full left-0 mt-2 w-[480px] max-w-[92vw] bg-white rounded-2xl border border-zinc-200 shadow-2xl p-3.5 z-50 overflow-hidden"
     >
-      <div className="flex items-center justify-between px-4 py-2 text-sm font-medium text-zinc-700 hover:bg-zinc-50 cursor-pointer transition-colors">
-        <span>{exam.name}</span>
-        <ChevronRight size={14} className={`text-zinc-400 transition-transform ${subOpen ? "rotate-90" : ""}`} />
+      {/* 3 Ana Modül Kartı */}
+      <div className="grid grid-cols-3 gap-2 pb-2.5 mb-2.5 border-b border-zinc-100">
+        <NavLink
+          to="/app/ders-notlari"
+          onClick={onClose}
+          className="group p-2 rounded-xl bg-zinc-50 hover:bg-subject-matematik/10 border border-zinc-100 hover:border-subject-matematik/30 transition-all text-center"
+        >
+          <div className="h-7 w-7 rounded-lg bg-white shadow-sm mx-auto mb-1 grid place-items-center text-subject-matematik group-hover:scale-110 transition-transform">
+            <BookOpen size={14} />
+          </div>
+          <div className="font-bold text-xs text-ink group-hover:text-subject-matematik transition-colors">Ders Notları</div>
+          <div className="text-[10px] text-zinc-400 truncate mt-0.5">Konu özetleri</div>
+        </NavLink>
+
+        <NavLink
+          to="/app/soru-bankasi"
+          onClick={onClose}
+          className="group p-2 rounded-xl bg-zinc-50 hover:bg-subject-fen/10 border border-zinc-100 hover:border-subject-fen/30 transition-all text-center"
+        >
+          <div className="h-7 w-7 rounded-lg bg-white shadow-sm mx-auto mb-1 grid place-items-center text-subject-fen group-hover:scale-110 transition-transform">
+            <Target size={14} />
+          </div>
+          <div className="font-bold text-xs text-ink group-hover:text-subject-fen transition-colors">Soru Bankası</div>
+          <div className="text-[10px] text-zinc-400 truncate mt-0.5">Çözümlü testler</div>
+        </NavLink>
+
+        <NavLink
+          to="/app/eksiklerim"
+          onClick={onClose}
+          className="group p-2 rounded-xl bg-zinc-50 hover:bg-subject-turkce/10 border border-zinc-100 hover:border-subject-turkce/30 transition-all text-center"
+        >
+          <div className="h-7 w-7 rounded-lg bg-white shadow-sm mx-auto mb-1 grid place-items-center text-subject-turkce group-hover:scale-110 transition-transform">
+            <Sparkles size={14} />
+          </div>
+          <div className="font-bold text-xs text-ink group-hover:text-subject-turkce transition-colors">Eksiklerim</div>
+          <div className="text-[10px] text-zinc-400 truncate mt-0.5">Zayıf konu analizi</div>
+        </NavLink>
       </div>
 
-      {subOpen && (
-        <div className="absolute left-full top-0 pl-1 w-64 max-h-[75vh] overflow-y-auto rounded-2xl border border-zinc-200 bg-white py-2 shadow-2xl z-50">
-          <DropdownLink to={`${basePath}?exam_id=${exam.id}`} className="font-bold border-b border-zinc-100 mb-1">
-            {exam.name} (Tüm Dersler)
-          </DropdownLink>
-          {subjects.length === 0 ? (
-            <div className="px-4 py-2 text-xs text-zinc-400 italic">Dersler yükleniyor...</div>
-          ) : (
-            subjects.map((s) => (
-              <CascadingSubjectItem
-                key={s.id}
-                examId={exam.id}
-                subject={s}
-                basePath={basePath}
-                topicCache={topicCache}
-                loadTopics={loadTopics}
-              />
-            ))
-          )}
+      {/* Popüler Dersler */}
+      <div>
+        <div className="px-1 py-1 text-[10px] font-extrabold uppercase tracking-wider text-zinc-400 mb-1">
+          Popüler Branşlar & Müfredat
         </div>
-      )}
-    </div>
-  );
-}
-
-function CascadingCategoryItem({ label, exams, subjCache, loadSubjects, topicCache, loadTopics, basePath }) {
-  const [subOpen, setSubOpen] = useState(false);
-  return (
-    <div className="relative" onMouseEnter={() => setSubOpen(true)} onMouseLeave={() => setSubOpen(false)}>
-      <div className="flex items-center justify-between px-4 py-2.5 text-sm text-zinc-700 hover:bg-zinc-50 cursor-pointer transition-colors">
-        <span className="font-medium">{label}</span>
-        <ChevronRight size={14} className={`text-zinc-400 transition-transform ${subOpen ? "rotate-90" : ""}`} />
-      </div>
-      {subOpen && exams.length > 0 && (
-        <div className="absolute left-full top-0 pl-1 w-60 max-h-[70vh] overflow-y-auto rounded-2xl border border-zinc-200 bg-white py-2 shadow-xl z-50">
-          {exams.map((e) => (
-            <CascadingExamItem
-              key={e.id}
-              exam={e}
-              basePath={basePath}
-              subjCache={subjCache}
-              loadSubjects={loadSubjects}
-              topicCache={topicCache}
-              loadTopics={loadTopics}
-            />
+        <div className="grid grid-cols-3 gap-1">
+          {popularSubjects.map((sub) => (
+            <NavLink
+              key={sub.name}
+              to="/app/ders-notlari"
+              onClick={onClose}
+              className="flex items-center justify-between px-2 py-1 rounded-lg hover:bg-zinc-50 border border-transparent hover:border-zinc-200 transition-all text-xs font-medium text-zinc-700 hover:text-ink"
+            >
+              <span className="truncate mr-1">{sub.name}</span>
+              <span className={`text-[9px] font-bold px-1 py-0.2 rounded ${sub.color}`}>{sub.tag}</span>
+            </NavLink>
           ))}
         </div>
-      )}
-    </div>
+      </div>
+    </motion.div>
   );
 }
-
 
 function DropdownLink({ to, children, onClick }) {
   return (
@@ -165,18 +221,45 @@ function DropdownLink({ to, children, onClick }) {
       to={to}
       onClick={onClick}
       className={({ isActive }) =>
-        `block px-4 py-2.5 text-sm transition-colors ${isActive ? "bg-subject-matematik/5 text-subject-matematik font-semibold" : "text-zinc-600 hover:bg-zinc-50"}`
+        `block px-3.5 py-2 text-xs rounded-xl font-medium transition-colors ${
+          isActive ? "bg-subject-matematik/10 text-subject-matematik font-bold" : "text-zinc-700 hover:bg-zinc-50 hover:text-ink"
+        }`
       }
     >
       {children}
     </NavLink>
   );
 }
+function DropdownMenu({ label, icon: Icon, active, children, onOpen, onClose }) {
+  const ref = useRef(null);
+  useClickOutside(ref, onClose);
+
+  return (
+    <div className="relative" ref={ref} onMouseEnter={onOpen} onMouseLeave={onClose}>
+      <button
+        type="button"
+        onClick={() => (active ? onClose() : onOpen())}
+        className={`flex items-center gap-1.5 px-3 py-2 rounded-xl text-sm font-semibold transition-all ${
+          active
+            ? "bg-zinc-100 text-subject-matematik"
+            : "text-zinc-600 hover:text-ink hover:bg-zinc-100/70"
+        }`}
+      >
+        {Icon && <Icon size={16} />}
+        {label}
+        <ChevronDown size={13} className={`transition-transform duration-200 ${active ? "rotate-180 text-subject-matematik" : "text-zinc-400"}`} />
+      </button>
+      <AnimatePresence>
+        {active && children}
+      </AnimatePresence>
+    </div>
+  );
+}
 
 function DropdownGroup({ label, children }) {
   return (
     <div className="py-1">
-      <div className="px-4 text-[11px] font-bold uppercase tracking-wide text-zinc-400 mb-1">{label}</div>
+      <div className="px-3 py-1 text-[10px] font-extrabold uppercase tracking-wider text-zinc-400">{label}</div>
       {children}
     </div>
   );
@@ -190,12 +273,27 @@ export default function AppLayout() {
   const { user, logout } = useAuth();
   const nav = useNavigate();
   const [menu, setMenu] = useState(false);
-  const [exams, setExams] = useState([]);
-  const [subjCache, setSubjCache] = useState({});
-  const [topicCache, setTopicCache] = useState({});
+  const [exams, setExams] = useState(DEFAULT_EXAMS);
+  const [openMenu, setOpenMenu] = useState(null); // 'sinavlar' | 'dersler' | 'araclar' | 'ai' | null
+  const menuTimerRef = useRef(null);
   const [credits, setCredits] = useState(null);
 
-  useEffect(() => { fetchExams().then(setExams).catch(() => setExams([])); }, []);
+  const handleMouseEnter = (name) => {
+    if (menuTimerRef.current) clearTimeout(menuTimerRef.current);
+    setOpenMenu(name);
+  };
+
+  const handleMouseLeave = () => {
+    menuTimerRef.current = setTimeout(() => {
+      setOpenMenu(null);
+    }, 180);
+  };
+
+  useEffect(() => {
+    fetchExams().then((data) => {
+      if (Array.isArray(data) && data.length > 0) setExams(data);
+    }).catch(() => {});
+  }, []);
 
   const refreshCredits = useCallback(() => {
     if (!user) return;
@@ -204,34 +302,18 @@ export default function AppLayout() {
 
   useEffect(() => { refreshCredits(); }, [refreshCredits]);
 
-  const loadSubjects = (examId) => {
-    if (subjCache[examId]) return;
-    fetchSubjects(examId).then((r) => setSubjCache((c) => ({ ...c, [examId]: r }))).catch(() => {});
-  };
-
-  const loadTopics = (examId, subjectId) => {
-    const key = `${examId}_${subjectId}`;
-    if (topicCache[key]) return;
-    fetchTopics(examId, subjectId).then((r) => setTopicCache((c) => ({ ...c, [key]: r }))).catch(() => {});
-  };
-
   const doLogout = async () => { await logout(); nav("/"); };
-
-  const examsByCat = EXAM_CATEGORIES.map((cat) => ({
-    ...cat,
-    exams: exams.filter((e) => e.category === cat.key),
-  })).filter((c) => c.exams.length > 0);
 
   const linkCls = ({ isActive }) =>
     `flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-sm font-medium transition-colors ${isActive ? "bg-ink text-white" : "text-zinc-600 hover:bg-black/5"}`;
 
   const headerCls = ({ isActive }) =>
-    `flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-medium transition-colors ${isActive ? "text-subject-matematik" : "text-zinc-600 hover:text-ink"}`;
+    `flex items-center gap-1.5 px-3 py-2 rounded-xl text-sm font-semibold transition-colors ${isActive ? "bg-zinc-100 text-subject-matematik" : "text-zinc-600 hover:text-ink hover:bg-zinc-100/70"}`;
 
   return (
     <div className="min-h-screen bg-paper">
       {/* Top header with dropdown menus */}
-      <header className="sticky top-0 z-40 bg-white border-b border-zinc-200 shadow-sm">
+      <header className="sticky top-0 z-40 bg-white/95 backdrop-blur-md border-b border-zinc-200/80 shadow-xs">
         <div className="flex items-center justify-between px-4 sm:px-6 h-14">
           <div className="flex items-center gap-1">
             <NavLink to={user ? "/app" : "/"} className="flex items-center gap-2 mr-3">
@@ -246,62 +328,174 @@ export default function AppLayout() {
               {/* Dashboard */}
               <NavLink to="/app" end className={headerCls}><LayoutDashboard size={16} /> Dashboard</NavLink>
 
-              {/* Sınav türleri dropdown — kademeli */}
-              <Dropdown label="Sınavlar" icon={GraduationCap}>
-                {examsByCat.map((cat) => (
-                  <CascadingCategoryItem
-                    key={cat.key}
-                    label={cat.label}
-                    exams={cat.exams}
-                    subjCache={subjCache}
-                    loadSubjects={loadSubjects}
-                    topicCache={topicCache}
-                    loadTopics={loadTopics}
-                    basePath="/app/soru-bankasi"
-                  />
-                ))}
-              </Dropdown>
+              {/* Sınavlar Mega Dropdown */}
+              <div
+                className="relative"
+                onMouseEnter={() => handleMouseEnter("sinavlar")}
+                onMouseLeave={handleMouseLeave}
+              >
+                <button
+                  type="button"
+                  onClick={() => setOpenMenu((m) => (m === "sinavlar" ? null : "sinavlar"))}
+                  className={`flex items-center gap-1.5 px-3 py-2 rounded-xl text-sm font-semibold transition-all ${
+                    openMenu === "sinavlar"
+                      ? "bg-zinc-100 text-subject-matematik"
+                      : "text-zinc-600 hover:text-ink hover:bg-zinc-100/70"
+                  }`}
+                >
+                  <GraduationCap size={16} /> Sınavlar
+                  <ChevronDown size={13} className={`transition-transform duration-200 ${openMenu === "sinavlar" ? "rotate-180 text-subject-matematik" : "text-zinc-400"}`} />
+                </button>
 
-              {/* Deneme */}
+                <AnimatePresence>
+                  {openMenu === "sinavlar" && (
+                    <AppSınavlarMenu exams={exams} onClose={() => setOpenMenu(null)} />
+                  )}
+                </AnimatePresence>
+              </div>
+
+              {/* Denemeler */}
               <NavLink to="/app/denemeler" className={headerCls}><FileText size={16} /> Denemeler</NavLink>
 
-              {/* Dersler dropdown — kademeli */}
-              <Dropdown label="Dersler" icon={BookCopy}>
-                <DropdownLink to="/app/ders-notlari">📚 Tüm Ders Notları</DropdownLink>
-                <DropdownLink to="/app/soru-bankasi">❓ Soru Bankası</DropdownLink>
-                <DropdownLink to="/app/eksiklerim">🎯 Eksiklerim & Zayıf Konular</DropdownLink>
-                <DropdownDivider />
-                <div className="px-4 py-1 text-[11px] font-bold uppercase tracking-wider text-zinc-400">Sınav & Branş Müfredatı</div>
-                {examsByCat.map((cat) => (
-                  <CascadingCategoryItem
-                    key={cat.key}
-                    label={cat.label}
-                    exams={cat.exams}
-                    subjCache={subjCache}
-                    loadSubjects={loadSubjects}
-                    topicCache={topicCache}
-                    loadTopics={loadTopics}
-                    basePath="/app/ders-notlari"
-                  />
-                ))}
-              </Dropdown>
+              {/* Dersler Mega Dropdown */}
+              <div
+                className="relative"
+                onMouseEnter={() => handleMouseEnter("dersler")}
+                onMouseLeave={handleMouseLeave}
+              >
+                <button
+                  type="button"
+                  onClick={() => setOpenMenu((m) => (m === "dersler" ? null : "dersler"))}
+                  className={`flex items-center gap-1.5 px-3 py-2 rounded-xl text-sm font-semibold transition-all ${
+                    openMenu === "dersler"
+                      ? "bg-zinc-100 text-subject-matematik"
+                      : "text-zinc-600 hover:text-ink hover:bg-zinc-100/70"
+                  }`}
+                >
+                  <BookCopy size={16} /> Dersler
+                  <ChevronDown size={13} className={`transition-transform duration-200 ${openMenu === "dersler" ? "rotate-180 text-subject-matematik" : "text-zinc-400"}`} />
+                </button>
+
+                <AnimatePresence>
+                  {openMenu === "dersler" && (
+                    <AppDerslerMenu onClose={() => setOpenMenu(null)} />
+                  )}
+                </AnimatePresence>
+              </div>
 
               {/* Araclar dropdown */}
-              <Dropdown label="Araçlar" icon={Calculator}>
+              <div
+                className="relative"
+                onMouseEnter={() => handleMouseEnter("araclar")}
+                onMouseLeave={handleMouseLeave}
+              >
+                <button
+                  type="button"
+                  onClick={() => setOpenMenu((m) => (m === "araclar" ? null : "araclar"))}
+                  className={`flex items-center gap-1.5 px-3 py-2 rounded-xl text-sm font-semibold transition-all ${
+                    openMenu === "araclar"
+                      ? "bg-zinc-100 text-subject-matematik"
+                      : "text-zinc-600 hover:text-ink hover:bg-zinc-100/70"
+                  }`}
+                >
+                  <Calculator size={16} /> Araçlar
+                  <ChevronDown size={13} className={`transition-transform duration-200 ${openMenu === "araclar" ? "rotate-180 text-subject-matematik" : "text-zinc-400"}`} />
+                </button>
 
-                <DropdownLink to="/app/puan-hesapla">Puan Hesapla</DropdownLink>
-                <DropdownLink to="/app/tercih-robotu">Tercih Robotu</DropdownLink>
-                <DropdownLink to="/app/geri-sayim">Geri Sayim</DropdownLink>
-              </Dropdown>
+                <AnimatePresence>
+                  {openMenu === "araclar" && (
+                    <motion.div
+                      initial={{ opacity: 0, y: 8, scale: 0.98 }}
+                      animate={{ opacity: 1, y: 0, scale: 1 }}
+                      exit={{ opacity: 0, y: 6, scale: 0.98 }}
+                      transition={{ duration: 0.18 }}
+                      className="absolute top-full left-0 mt-2 w-56 bg-white rounded-2xl border border-zinc-200 shadow-2xl p-2 z-50"
+                    >
+                      <DropdownLink to="/app/puan-hesapla" onClick={() => setOpenMenu(null)}>
+                        <div className="flex items-center gap-2">
+                          <Calculator size={15} className="text-subject-matematik" />
+                          <div>
+                            <div className="font-bold text-xs">Puan Hesapla</div>
+                            <div className="text-[10px] text-zinc-400">Tüm sınavlar için canlı hesaplama</div>
+                          </div>
+                        </div>
+                      </DropdownLink>
+                      <DropdownLink to="/app/tercih-robotu" onClick={() => setOpenMenu(null)}>
+                        <div className="flex items-center gap-2">
+                          <Compass size={15} className="text-subject-fen" />
+                          <div>
+                            <div className="font-bold text-xs">Tercih Robotu</div>
+                            <div className="text-[10px] text-zinc-400">81 il üniversite ve taban puanlar</div>
+                          </div>
+                        </div>
+                      </DropdownLink>
+                      <DropdownLink to="/app/geri-sayim" onClick={() => setOpenMenu(null)}>
+                        <div className="flex items-center gap-2">
+                          <Clock size={15} className="text-subject-turkce" />
+                          <div>
+                            <div className="font-bold text-xs">Geri Sayım</div>
+                            <div className="text-[10px] text-zinc-400">ÖSYM & MEB sınav takvim sayacı</div>
+                          </div>
+                        </div>
+                      </DropdownLink>
+                    </motion.div>
+                  )}
+                </AnimatePresence>
+              </div>
 
-              {/* AI */}
-              <Dropdown label="AI" icon={Brain}>
-                <DropdownLink to="/app/ai-koc">AI Koc</DropdownLink>
-                <DropdownLink to="/app/ai-sohbet">AI Sohbet</DropdownLink>
-              </Dropdown>
+              {/* AI Dropdown */}
+              <div
+                className="relative"
+                onMouseEnter={() => handleMouseEnter("ai")}
+                onMouseLeave={handleMouseLeave}
+              >
+                <button
+                  type="button"
+                  onClick={() => setOpenMenu((m) => (m === "ai" ? null : "ai"))}
+                  className={`flex items-center gap-1.5 px-3 py-2 rounded-xl text-sm font-semibold transition-all ${
+                    openMenu === "ai"
+                      ? "bg-zinc-100 text-subject-matematik"
+                      : "text-zinc-600 hover:text-ink hover:bg-zinc-100/70"
+                  }`}
+                >
+                  <Brain size={16} /> AI Asistan
+                  <ChevronDown size={13} className={`transition-transform duration-200 ${openMenu === "ai" ? "rotate-180 text-subject-matematik" : "text-zinc-400"}`} />
+                </button>
+
+                <AnimatePresence>
+                  {openMenu === "ai" && (
+                    <motion.div
+                      initial={{ opacity: 0, y: 8, scale: 0.98 }}
+                      animate={{ opacity: 1, y: 0, scale: 1 }}
+                      exit={{ opacity: 0, y: 6, scale: 0.98 }}
+                      transition={{ duration: 0.18 }}
+                      className="absolute top-full left-0 mt-2 w-52 bg-white rounded-2xl border border-zinc-200 shadow-2xl p-2 z-50"
+                    >
+                      <DropdownLink to="/app/ai-koc" onClick={() => setOpenMenu(null)}>
+                        <div className="flex items-center gap-2">
+                          <Brain size={15} className="text-subject-matematik" />
+                          <div>
+                            <div className="font-bold text-xs">AI Koç</div>
+                            <div className="text-[10px] text-zinc-400">Kişiselleştirilmiş analiz</div>
+                          </div>
+                        </div>
+                      </DropdownLink>
+                      <DropdownLink to="/app/ai-sohbet" onClick={() => setOpenMenu(null)}>
+                        <div className="flex items-center gap-2">
+                          <MessageSquare size={15} className="text-subject-fen" />
+                          <div>
+                            <div className="font-bold text-xs">AI Sohbet</div>
+                            <div className="text-[10px] text-zinc-400">7/24 soru ve konu danışmanı</div>
+                          </div>
+                        </div>
+                      </DropdownLink>
+                    </motion.div>
+                  )}
+                </AnimatePresence>
+              </div>
 
               {/* Diger */}
-              <NavLink to="/app/siralama" className={headerCls}><Trophy size={16} /> Siralama</NavLink>
+              <NavLink to="/app/siralama" className={headerCls}><Trophy size={16} /> Sıralama</NavLink>
               <NavLink to="/app/rozetler" className={headerCls}><Award size={16} /> Rozetler</NavLink>
             </nav>
           </div>

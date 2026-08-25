@@ -59,6 +59,26 @@ export const EXAM_CATEGORIES = [
 ];
 
 
+export const DEFAULT_EXAMS = [
+  { id: "yks-tyt", name: "YKS TYT", exam_type: "TYT", category: "universite", description: "Temel Yeterlilik Testi (120 Soru / 165 Dk)" },
+  { id: "yks-ayt", name: "YKS AYT", exam_type: "AYT", category: "universite", description: "Alan Yeterlilik Testi (80 Soru / 180 Dk)" },
+  { id: "ales", name: "ALES", exam_type: "ALES", category: "universite", description: "Akademik Personel ve Lisansüstü Giriş Sınavı" },
+  { id: "dgs", name: "DGS", exam_type: "DGS", category: "universite", description: "Dikey Geçiş Sınavı" },
+  { id: "kpss-lisans", name: "KPSS Lisans", exam_type: "KPSS", category: "kpss", description: "Genel Yetenek & Genel Kültür (B Grubu)" },
+  { id: "kpss-alan", name: "KPSS Alan Bilgisi (A Grubu)", exam_type: "KPSS-A", category: "kpss", description: "Müfettişlik, Uzmanlık ve Kariyer Meslekler" },
+  { id: "kpss-egitim", name: "KPSS Eğitim Bilimleri", exam_type: "KPSS-Egitim", category: "kpss", description: "Öğretmenlik Alan Sınavı" },
+  { id: "kpss-onlisans", name: "KPSS Ön Lisans", exam_type: "KPSS-OnLisans", category: "kpss", description: "Ön Lisans Mezunları İçin" },
+  { id: "kpss-ortaogretim", name: "KPSS Ortaöğretim", exam_type: "KPSS-Lise", category: "kpss", description: "Lise Mezunları İçin" },
+  { id: "tus", name: "TUS (Tıpta Uzmanlık)", exam_type: "TUS", category: "saglik", description: "Tıpta Uzmanlık Eğitimi Giriş Sınavı" },
+  { id: "dus", name: "DUS (Diş Hekimliği)", exam_type: "DUS", category: "saglik", description: "Diş Hekimliğinde Uzmanlık Sınavı" },
+  { id: "smmm", name: "SMMM Staja Başlama", exam_type: "SMMM", category: "mesleki", description: "Mali Müşavirlik Sınavları" },
+  { id: "hakimlik", name: "Adli & İdari Yargı Hakimlik", exam_type: "Hakimlik", category: "mesleki", description: "Hakim / Savcı Yardımcılığı Sınavı" },
+  { id: "yds", name: "YDS (İngilizce)", exam_type: "YDS", category: "dil", description: "Yabancı Dil Bilgisi Seviye Tespit Sınavı" },
+  { id: "yokdil", name: "YÖKDİL", exam_type: "YOKDIL", category: "dil", description: "YÖK Yabancı Dil Sınavı" },
+  { id: "msu", name: "MSÜ", exam_type: "MSU", category: "askeri", description: "Milli Savunma Üniversitesi Askeri Öğrenci Sınavı" },
+  { id: "lgs", name: "LGS (Liselere Geçiş)", exam_type: "LGS", category: "ortaokul", description: "Liselere Geçiş Sistemi Sınavı" },
+];
+
 export function getLevelInfo(xp = 0) {
   const currentXP = Number(xp) || 0;
   const level = Math.floor(currentXP / 500) + 1;
@@ -79,8 +99,15 @@ export function getLevelInfo(xp = 0) {
 
 // ============ EXAMS & SCORING ============
 export async function fetchExams() {
-  const res = await api.get("/exams");
-  return res.data;
+  try {
+    const res = await api.get("/exams", { timeout: 4000 });
+    if (Array.isArray(res.data) && res.data.length > 0) {
+      return res.data;
+    }
+    return DEFAULT_EXAMS;
+  } catch {
+    return DEFAULT_EXAMS;
+  }
 }
 
 export async function updateExamDate(examId, dateString) {

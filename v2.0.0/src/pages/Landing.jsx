@@ -51,76 +51,222 @@ function useClickOutside(ref, cb) {
   }, [ref, cb]);
 }
 
-function LandingDropdown({ label, icon: Icon, children }) {
-  const [open, setOpen] = useState(false);
-  const ref = useRef(null);
-  useClickOutside(ref, () => setOpen(false));
-  return (
-    <div className="relative" ref={ref} onMouseEnter={() => setOpen(true)} onMouseLeave={() => setOpen(false)}>
-      <button
-        onClick={() => setOpen((o) => !o)}
-        className={`flex items-center gap-1 whitespace-nowrap px-2 sm:px-3 py-2 rounded-lg transition-colors ${open ? "text-subject-matematik" : "text-zinc-600 hover:text-ink hover:bg-zinc-100"}`}
-      >
-        {Icon && <Icon size={15} className="hidden sm:block" />}
-        {label}
-        <ChevronDown size={13} className={`transition-transform ${open ? "rotate-180" : ""}`} />
-      </button>
-      {open && (
-        <div className="absolute top-full left-0 pt-1 w-56 rounded-2xl border border-zinc-200 bg-white py-2 shadow-xl z-50">
-          {children}
-        </div>
-      )}
-    </div>
-  );
-}
+function SınavlarMegaMenu({ exams, onClose }) {
+  const [activeCat, setActiveCat] = useState("universite");
 
-function CascadingMenuItem({ label, exams, subjCache, loadSubjects, basePath }) {
-  const [subOpen, setSubOpen] = useState(false);
+  const categories = [
+    { key: "universite", label: "Üniversite & Lisansüstü", icon: "🎓", badge: "YKS / ALES / DGS" },
+    { key: "kpss", label: "KPSS & Kariyer", icon: "💼", badge: "Lisans / Alan / Eğitim" },
+    { key: "saglik", label: "Sağlık & Tıp", icon: "🩺", badge: "TUS / DUS" },
+    { key: "mesleki", label: "Mesleki & Hukuk", icon: "⚖️", badge: "SMMM / Hakimlik" },
+    { key: "dil", label: "Yabancı Dil", icon: "🌍", badge: "YDS / YÖKDİL" },
+    { key: "ortaokul", label: "MEB & Lise Giriş", icon: "🎒", badge: "LGS / MSÜ" },
+  ];
+
+  const filteredExams = exams.filter((e) => {
+    if (activeCat === "ortaokul") return e.category === "ortaokul" || e.category === "askeri";
+    return e.category === activeCat;
+  });
+
   return (
-    <div className="relative" onMouseEnter={() => setSubOpen(true)} onMouseLeave={() => setSubOpen(false)}>
-      <div className="flex items-center justify-between px-4 py-2.5 text-sm text-zinc-700 hover:bg-zinc-50 cursor-pointer transition-colors">
-        <span className="font-medium">{label}</span>
-        <ChevronRight size={14} className={`text-zinc-400 transition-transform ${subOpen ? "rotate-90" : ""}`} />
-      </div>
-      {subOpen && exams.length > 0 && (
-        <div className="absolute left-full top-0 pl-1 w-56 max-h-[70vh] overflow-y-auto rounded-2xl border border-zinc-200 bg-white py-2 shadow-xl z-50">
-          {exams.map((e) => (
-            <div key={e.id} onMouseEnter={() => loadSubjects(e.id)}>
-              <LandingDropdownLink to={`${basePath}?exam_id=${e.id}`}>{e.name}</LandingDropdownLink>
-              {subjCache[e.id]?.map((s) => (
-                <Link key={s.id} to={`${basePath}?exam_id=${e.id}&subject_id=${s.id}`}
-                  className="block pl-8 pr-4 py-2 text-sm text-zinc-500 hover:bg-zinc-50 hover:text-zinc-700">{s.name}</Link>
+    <motion.div
+      initial={{ opacity: 0, y: 10, scale: 0.98 }}
+      animate={{ opacity: 1, y: 0, scale: 1 }}
+      exit={{ opacity: 0, y: 8, scale: 0.98 }}
+      transition={{ duration: 0.2 }}
+      className="absolute top-full left-1/2 -translate-x-1/2 mt-2 w-[620px] max-w-[92vw] bg-white/95 backdrop-blur-xl rounded-3xl border border-zinc-200/80 shadow-[0_20px_50px_rgba(0,0,0,0.12)] p-4 z-50 overflow-hidden"
+    >
+      <div className="grid grid-cols-12 gap-3">
+        {/* Sol Kategori Listesi */}
+        <div className="col-span-5 bg-zinc-50/80 rounded-2xl p-1.5 space-y-1 border border-zinc-100">
+          <div className="px-3 py-1 text-[11px] font-extrabold uppercase tracking-wider text-zinc-400">Kategoriler</div>
+          {categories.map((cat) => {
+            const isActive = activeCat === cat.key;
+            return (
+              <button
+                key={cat.key}
+                type="button"
+                onMouseEnter={() => setActiveCat(cat.key)}
+                onClick={() => setActiveCat(cat.key)}
+                className={`w-full flex items-center justify-between px-3 py-2.5 rounded-xl text-left transition-all ${
+                  isActive
+                    ? "bg-white text-ink shadow-sm border border-zinc-200/80 font-bold"
+                    : "text-zinc-600 hover:bg-white/60 hover:text-ink font-medium"
+                }`}
+              >
+                <div className="flex items-center gap-2 truncate">
+                  <span className="text-base">{cat.icon}</span>
+                  <span className="text-xs truncate">{cat.label}</span>
+                </div>
+                <ChevronRight size={13} className={`shrink-0 transition-transform ${isActive ? "text-subject-matematik translate-x-0.5" : "text-zinc-300"}`} />
+              </button>
+            );
+          })}
+        </div>
+
+        {/* Sağ Sınav Kartları */}
+        <div className="col-span-7 flex flex-col justify-between pl-1">
+          <div>
+            <div className="flex items-center justify-between pb-2 mb-2 border-b border-zinc-100">
+              <span className="text-xs font-bold text-ink">
+                {categories.find((c) => c.key === activeCat)?.label} Sınavları
+              </span>
+              <span className="text-[11px] text-zinc-400 font-semibold">{filteredExams.length} Sınav</span>
+            </div>
+
+            <div className="space-y-1.5 max-h-[260px] overflow-y-auto pr-1">
+              {filteredExams.map((exam) => (
+                <div
+                  key={exam.id || exam.name}
+                  className="group flex items-center justify-between p-2 rounded-xl hover:bg-zinc-50 border border-transparent hover:border-zinc-200/60 transition-all"
+                >
+                  <div className="truncate mr-2">
+                    <div className="flex items-center gap-1.5">
+                      <span className="font-bold text-xs text-ink group-hover:text-subject-matematik transition-colors">{exam.name}</span>
+                      <span className="text-[10px] font-extrabold uppercase px-1.5 py-0.5 rounded-md bg-zinc-100 text-zinc-500">{exam.exam_type}</span>
+                    </div>
+                    <p className="text-[11px] text-zinc-400 truncate">{exam.description || "Resmi ÖSYM müfredatı & testler"}</p>
+                  </div>
+                  <div className="flex items-center gap-1 shrink-0">
+                    <Link
+                      to={`/app/soru-bankasi?exam_id=${exam.id}`}
+                      onClick={onClose}
+                      className="px-2 py-1 rounded-lg bg-zinc-100 hover:bg-ink hover:text-white text-[11px] font-bold text-zinc-600 transition-colors"
+                      title="Soru Bankası"
+                    >
+                      Sorular
+                    </Link>
+                    <Link
+                      to={`/app/ders-notlari?exam_id=${exam.id}`}
+                      onClick={onClose}
+                      className="px-2 py-1 rounded-lg bg-zinc-100 hover:bg-subject-matematik hover:text-white text-[11px] font-bold text-zinc-600 transition-colors"
+                      title="Ders Notları"
+                    >
+                      Notlar
+                    </Link>
+                  </div>
+                </div>
               ))}
             </div>
+          </div>
+
+          <div className="pt-2 mt-2 border-t border-zinc-100 flex items-center justify-between text-[11px]">
+            <Link to="/app/puan-hesapla" onClick={onClose} className="text-subject-matematik font-bold flex items-center gap-1 hover:underline">
+              <Calculator size={13} /> Puanını Hesapla
+            </Link>
+            <Link to="/app/tercih-robotu" onClick={onClose} className="text-zinc-500 font-medium flex items-center gap-1 hover:text-ink">
+              <Compass size={13} /> Tercih Robotu &rarr;
+            </Link>
+          </div>
+        </div>
+      </div>
+    </motion.div>
+  );
+}
+
+function DerslerMegaMenu({ onClose }) {
+  const popularSubjects = [
+    { name: "Temel Matematik", tag: "Mat-1", color: "bg-blue-50 text-blue-700" },
+    { name: "İleri Matematik & Geometri", tag: "Mat-2", color: "bg-indigo-50 text-indigo-700" },
+    { name: "Türkçe & Dil Bilgisi", tag: "Türkçe", color: "bg-emerald-50 text-emerald-700" },
+    { name: "Türk Dili ve Edebiyatı", tag: "Edebiyat", color: "bg-amber-50 text-amber-700" },
+    { name: "Fizik", tag: "Fen", color: "bg-purple-50 text-purple-700" },
+    { name: "Kimya", tag: "Fen", color: "bg-pink-50 text-pink-700" },
+    { name: "Biyoloji", tag: "Fen", color: "bg-teal-50 text-teal-700" },
+    { name: "Tarih & İnkılap", tag: "Sosyal", color: "bg-rose-50 text-rose-700" },
+    { name: "Coğrafya & Vatandaşlık", tag: "Sosyal", color: "bg-sky-50 text-sky-700" },
+  ];
+
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 10, scale: 0.98 }}
+      animate={{ opacity: 1, y: 0, scale: 1 }}
+      exit={{ opacity: 0, y: 8, scale: 0.98 }}
+      transition={{ duration: 0.2 }}
+      className="absolute top-full left-1/2 -translate-x-1/2 mt-2 w-[520px] max-w-[92vw] bg-white/95 backdrop-blur-xl rounded-3xl border border-zinc-200/80 shadow-[0_20px_50px_rgba(0,0,0,0.12)] p-4 z-50 overflow-hidden"
+    >
+      {/* 3 Ana Modül Kartı */}
+      <div className="grid grid-cols-3 gap-2 pb-3 mb-3 border-b border-zinc-100">
+        <Link
+          to="/app/ders-notlari"
+          onClick={onClose}
+          className="group p-2.5 rounded-2xl bg-zinc-50 hover:bg-subject-matematik/10 border border-zinc-100 hover:border-subject-matematik/30 transition-all text-center"
+        >
+          <div className="h-8 w-8 rounded-xl bg-white shadow-sm mx-auto mb-1.5 grid place-items-center text-subject-matematik group-hover:scale-110 transition-transform">
+            <BookOpen size={16} />
+          </div>
+          <div className="font-bold text-xs text-ink group-hover:text-subject-matematik transition-colors">Ders Notları</div>
+          <div className="text-[10px] text-zinc-400 line-clamp-1 mt-0.5">Konu özetleri</div>
+        </Link>
+
+        <Link
+          to="/app/soru-bankasi"
+          onClick={onClose}
+          className="group p-2.5 rounded-2xl bg-zinc-50 hover:bg-subject-fen/10 border border-zinc-100 hover:border-subject-fen/30 transition-all text-center"
+        >
+          <div className="h-8 w-8 rounded-xl bg-white shadow-sm mx-auto mb-1.5 grid place-items-center text-subject-fen group-hover:scale-110 transition-transform">
+            <CheckCircle2 size={16} />
+          </div>
+          <div className="font-bold text-xs text-ink group-hover:text-subject-fen transition-colors">Soru Bankası</div>
+          <div className="text-[10px] text-zinc-400 line-clamp-1 mt-0.5">Çözümlü testler</div>
+        </Link>
+
+        <Link
+          to="/app/eksiklerim"
+          onClick={onClose}
+          className="group p-2.5 rounded-2xl bg-zinc-50 hover:bg-subject-turkce/10 border border-zinc-100 hover:border-subject-turkce/30 transition-all text-center"
+        >
+          <div className="h-8 w-8 rounded-xl bg-white shadow-sm mx-auto mb-1.5 grid place-items-center text-subject-turkce group-hover:scale-110 transition-transform">
+            <Target size={16} />
+          </div>
+          <div className="font-bold text-xs text-ink group-hover:text-subject-turkce transition-colors">Eksiklerim</div>
+          <div className="text-[10px] text-zinc-400 line-clamp-1 mt-0.5">Zayıf konu analizi</div>
+        </Link>
+      </div>
+
+      {/* Popüler Dersler */}
+      <div>
+        <div className="px-1 py-1 text-[11px] font-extrabold uppercase tracking-wider text-zinc-400 mb-1.5">
+          Popüler Branşlar & Müfredat
+        </div>
+        <div className="grid grid-cols-3 gap-1.5">
+          {popularSubjects.map((sub) => (
+            <Link
+              key={sub.name}
+              to="/app/ders-notlari"
+              onClick={onClose}
+              className="flex items-center justify-between px-2.5 py-1.5 rounded-xl hover:bg-zinc-50 border border-transparent hover:border-zinc-200/60 transition-all text-xs font-medium text-zinc-700 hover:text-ink"
+            >
+              <span className="truncate mr-1">{sub.name}</span>
+              <span className={`text-[9px] font-bold px-1.5 py-0.2 rounded-md ${sub.color}`}>{sub.tag}</span>
+            </Link>
           ))}
         </div>
-      )}
-    </div>
+      </div>
+    </motion.div>
   );
-}
-
-function LandingDropdownLink({ to, children }) {
-  return (
-    <Link to={to} className="block px-4 py-2.5 text-sm text-zinc-600 hover:bg-zinc-50 hover:text-ink transition-colors">{children}</Link>
-  );
-}
-
-function LandingDropdownGroup({ label, children }) {
-  return (
-    <div className="py-1">
-      <div className="px-4 text-[11px] font-bold uppercase tracking-wide text-zinc-400 mb-1">{label}</div>
-      {children}
-    </div>
-  );
-}
-
-function LandingDropdownDivider() {
-  return <div className="my-1 border-t border-zinc-100" />;
 }
 
 export default function Landing() {
   const { user } = useAuth();
   const [blogs, setBlogs] = useState([]);
+  const [exams, setExams] = useState(DEFAULT_EXAMS);
+  const [openMenu, setOpenMenu] = useState(null); // 'sinavlar' | 'dersler' | null
+  const menuTimerRef = useRef(null);
+  const navRef = useRef(null);
+
+  useClickOutside(navRef, () => setOpenMenu(null));
+
+  const handleMouseEnter = (menuName) => {
+    if (menuTimerRef.current) clearTimeout(menuTimerRef.current);
+    setOpenMenu(menuName);
+  };
+
+  const handleMouseLeave = () => {
+    menuTimerRef.current = setTimeout(() => {
+      setOpenMenu(null);
+    }, 180);
+  };
 
   useEffect(() => {
     fetch(`${import.meta.env.VITE_API_URL || "http://127.0.0.1:8001/api"}/blog?limit=3`)
@@ -130,15 +276,18 @@ export default function Landing() {
   }, []);
 
   const heroRef = useRef(null);
-  const [exams, setExams] = useState([]);
-  const [subjCache, setSubjCache] = useState({});
   const { scrollYProgress } = useScroll({ target: heroRef, offset: ["start start", "end start"] });
   const imgY = useTransform(scrollYProgress, [0, 1], [0, 140]);
   const imgScale = useTransform(scrollYProgress, [0, 1], [1, 1.12]);
   const badgeY = useTransform(scrollYProgress, [0, 1], [0, -60]);
 
   useEffect(() => {
-    fetchExams().then(setExams).catch(() => setExams([]));
+    fetchExams().then((data) => {
+      if (Array.isArray(data) && data.length > 0) {
+        setExams(data);
+      }
+    }).catch(() => {});
+
     const lenis = new Lenis({ duration: 1.15, smoothWheel: true });
     let raf;
     const loop = (t) => { lenis.raf(t); raf = requestAnimationFrame(loop); };
@@ -146,68 +295,106 @@ export default function Landing() {
     return () => { cancelAnimationFrame(raf); lenis.destroy(); };
   }, []);
 
-  const loadSubjects = (examId) => {
-    if (subjCache[examId]) return;
-    fetchSubjects(examId).then((r) => setSubjCache((c) => ({ ...c, [examId]: r }))).catch(() => {});
-  };
-
-  const examsByCat = EXAM_CATEGORIES.map((cat) => ({
-    ...cat,
-    exams: exams.filter((e) => e.category === cat.key),
-  })).filter((c) => c.exams.length > 0);
-
   return (
     <div className="grain relative bg-paper text-ink font-sans">
       <header className="fixed top-0 inset-x-0 z-50">
-        <div className="mx-auto max-w-7xl px-5 sm:px-8 mt-4">
-          <div className="glass rounded-full border border-white/60 shadow-[0_8px_32px_rgba(0,0,0,0.05)] flex items-center justify-between pl-6 pr-2 py-2">
-            <Link to="/" data-testid="logo-home" className="flex items-center gap-2">
+        <div className="mx-auto max-w-7xl px-4 sm:px-8 mt-4">
+          <div ref={navRef} className="glass rounded-full border border-white/60 shadow-[0_8px_32px_rgba(0,0,0,0.05)] flex items-center justify-between pl-5 pr-2 py-2 relative">
+            {/* Logo */}
+            <Link to="/" data-testid="logo-home" className="flex items-center gap-2 shrink-0">
               <span className="h-7 w-7 rounded-lg bg-subject-matematik grid place-items-center"><Sparkles size={15} className="text-white" /></span>
               <span className="font-heading font-extrabold text-lg tracking-tight">HedefMatik</span>
             </Link>
-            <nav className="flex items-center gap-0.5 text-sm max-w-[56vw] sm:max-w-none">
-              {/* Sınavlar dropdown — kademeli */}
-              <LandingDropdown label="Sınavlar" icon={GradIcon}>
-                {examsByCat.map((cat) => (
-                  <CascadingMenuItem key={cat.key} label={cat.label} exams={cat.exams} subjCache={subjCache} loadSubjects={loadSubjects} basePath="/app/soru-bankasi" />
-                ))}
-              </LandingDropdown>
 
-              {/* Dersler dropdown — kademeli */}
-              <LandingDropdown label="Dersler" icon={BookCopy}>
-                <LandingDropdownLink to="/app/ders-notlari">Ders Notları</LandingDropdownLink>
-                <LandingDropdownLink to="/app/soru-bankasi">Soru Bankası</LandingDropdownLink>
-                {user && <LandingDropdownLink to="/app/eksiklerim">Eksiklerim</LandingDropdownLink>}
-                <LandingDropdownDivider />
-                {examsByCat.map((cat) => (
-                  <CascadingMenuItem key={cat.key} label={cat.label} exams={cat.exams} subjCache={subjCache} loadSubjects={loadSubjects} basePath="/app/ders-notlari" />
-                ))}
-              </LandingDropdown>
+            {/* Desktop Navigation */}
+            <nav className="flex items-center gap-1 text-sm">
+              {/* Sınavlar Mega Dropdown */}
+              <div
+                className="relative"
+                onMouseEnter={() => handleMouseEnter("sinavlar")}
+                onMouseLeave={handleMouseLeave}
+              >
+                <button
+                  type="button"
+                  onClick={() => setOpenMenu((m) => (m === "sinavlar" ? null : "sinavlar"))}
+                  className={`flex items-center gap-1 px-3 py-2 rounded-xl text-sm font-semibold transition-all ${
+                    openMenu === "sinavlar"
+                      ? "bg-zinc-100 text-subject-matematik"
+                      : "text-zinc-600 hover:text-ink hover:bg-zinc-100/70"
+                  }`}
+                >
+                  <GradIcon size={15} /> Sınavlar
+                  <ChevronDown size={13} className={`transition-transform duration-200 ${openMenu === "sinavlar" ? "rotate-180 text-subject-matematik" : "text-zinc-400"}`} />
+                </button>
+
+                <AnimatePresence>
+                  {openMenu === "sinavlar" && (
+                    <SınavlarMegaMenu exams={exams} onClose={() => setOpenMenu(null)} />
+                  )}
+                </AnimatePresence>
+              </div>
+
+              {/* Dersler Mega Dropdown */}
+              <div
+                className="relative"
+                onMouseEnter={() => handleMouseEnter("dersler")}
+                onMouseLeave={handleMouseLeave}
+              >
+                <button
+                  type="button"
+                  onClick={() => setOpenMenu((m) => (m === "dersler" ? null : "dersler"))}
+                  className={`flex items-center gap-1 px-3 py-2 rounded-xl text-sm font-semibold transition-all ${
+                    openMenu === "dersler"
+                      ? "bg-zinc-100 text-subject-matematik"
+                      : "text-zinc-600 hover:text-ink hover:bg-zinc-100/70"
+                  }`}
+                >
+                  <BookCopy size={15} /> Dersler
+                  <ChevronDown size={13} className={`transition-transform duration-200 ${openMenu === "dersler" ? "rotate-180 text-subject-matematik" : "text-zinc-400"}`} />
+                </button>
+
+                <AnimatePresence>
+                  {openMenu === "dersler" && (
+                    <DerslerMegaMenu onClose={() => setOpenMenu(null)} />
+                  )}
+                </AnimatePresence>
+              </div>
 
               {/* Puan Hesapla */}
-              <Link to="/app/puan-hesapla" className="flex items-center gap-1 whitespace-nowrap px-2 sm:px-3 py-2 rounded-lg text-zinc-600 hover:text-ink hover:bg-zinc-100 transition-colors">
-                <Calculator size={15} className="hidden sm:block" /> Puan Hesapla
+              <Link
+                to="/app/puan-hesapla"
+                className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-sm font-semibold text-zinc-600 hover:text-ink hover:bg-zinc-100/70 transition-colors"
+              >
+                <Calculator size={15} className="text-zinc-500" /> Puan Hesapla
               </Link>
 
               {/* Tercih Robotu */}
-              <Link to="/app/tercih-robotu" className="flex items-center gap-1 whitespace-nowrap px-2 sm:px-3 py-2 rounded-lg text-zinc-600 hover:text-ink hover:bg-zinc-100 transition-colors">
-                <Compass size={15} className="hidden sm:block" /> Tercih Robotu
+              <Link
+                to="/app/tercih-robotu"
+                className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-sm font-semibold text-zinc-600 hover:text-ink hover:bg-zinc-100/70 transition-colors"
+              >
+                <Compass size={15} className="text-zinc-500" /> Tercih Robotu
               </Link>
 
               {/* Geri Sayım */}
-              <Link to="/app/geri-sayim" className="flex items-center gap-1 whitespace-nowrap px-2 sm:px-3 py-2 rounded-lg text-zinc-600 hover:text-ink hover:bg-zinc-100 transition-colors">
-                <Clock size={15} className="hidden sm:block" /> Geri Sayım
+              <Link
+                to="/app/geri-sayim"
+                className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-sm font-semibold text-zinc-600 hover:text-ink hover:bg-zinc-100/70 transition-colors"
+              >
+                <Clock size={15} className="text-zinc-500" /> Geri Sayım
               </Link>
             </nav>
+
+            {/* Auth CTAs */}
             <div className="flex items-center gap-2">
               {user ? (
-                <Link to="/app" className="group text-sm font-semibold px-5 py-2.5 rounded-full bg-ink text-white flex items-center gap-1.5 hover:bg-subject-matematik transition-colors">
+                <Link to="/app" className="group text-sm font-semibold px-5 py-2.5 rounded-full bg-ink text-white flex items-center gap-1.5 hover:bg-subject-matematik transition-colors shadow-sm">
                   Uygulamaya Git<ArrowRight size={15} className="group-hover:translate-x-1 transition-transform" />
                 </Link>
               ) : (
                 <>
-                  <Link to="/login" data-testid="nav-login" className="hidden sm:inline text-sm font-medium px-4 py-2 rounded-full hover:bg-black/5 transition-colors">Giriş</Link>
-                  <Link to="/onboarding" data-testid="nav-register" className="group text-sm font-semibold px-5 py-2.5 rounded-full bg-ink text-white flex items-center gap-1.5 hover:bg-subject-matematik transition-colors">
+                  <Link to="/login" data-testid="nav-login" className="hidden sm:inline text-sm font-semibold px-4 py-2 rounded-full text-zinc-700 hover:bg-black/5 transition-colors">Giriş</Link>
+                  <Link to="/onboarding" data-testid="nav-register" className="group text-sm font-semibold px-5 py-2.5 rounded-full bg-ink text-white flex items-center gap-1.5 hover:bg-subject-matematik transition-colors shadow-sm">
                     Ücretsiz Başla<ArrowUpRight size={15} className="group-hover:rotate-45 transition-transform" />
                   </Link>
                 </>
