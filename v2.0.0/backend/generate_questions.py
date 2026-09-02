@@ -72,19 +72,34 @@ JSON Şeması:
 
 async def call_gemini(prompt: str, api_key: str) -> str:
     import httpx
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={api_key}"
-    body = {
-        "contents": [{"parts": [{"text": prompt}]}],
-        "generationConfig": {
-            "temperature": 0.7,
-            "maxOutputTokens": 4096,
-            "responseMimeType": "application/json"
-        },
-    }
-    async with httpx.AsyncClient(timeout=60) as client:
-        r = await client.post(url, json=body)
-        r.raise_for_status()
-        return r.json()["candidates"][0]["content"]["parts"][0]["text"]
+    default_model = os.getenv("GEMINI_MODEL", "gemini-3.6-flash")
+    models_to_try = [default_model, "gemini-2.0-flash", "gemini-1.5-flash"]
+    models_to_try = list(dict.fromkeys(models_to_try))
+    
+    last_err = None
+    for model in models_to_try:
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}"
+        body = {
+            "contents": [{"parts": [{"text": prompt}]}],
+            "generationConfig": {
+                "temperature": 0.7,
+                "maxOutputTokens": 4096,
+                "responseMimeType": "application/json"
+            },
+        }
+        try:
+            async with httpx.AsyncClient(timeout=60) as client:
+                r = await client.post(url, json=body)
+                if r.status_code == 200:
+                    return r.json()["candidates"][0]["content"]["parts"][0]["text"]
+                elif r.status_code == 404:
+                    continue
+                else:
+                    r.raise_for_status()
+        except Exception as e:
+            last_err = e
+            continue
+    raise last_err or RuntimeError("Gemini API çağrısı başarısız oldu.")
 
 async def call_openai(prompt: str, api_key: str) -> str:
     import httpx
@@ -121,6 +136,20 @@ class QuestionGenerator:
         if raw:
             keys = [k.strip() for k in raw.replace(";", ",").replace("\n", ",").split(",") if k.strip()]
         return keys
+
+    async def load_db_keys(self, pool=None):
+        if not pool:
+            return
+        try:
+            async with pool.acquire() as conn:
+                async with conn.cursor() as cur:
+                    await cur.execute("SELECT key_value FROM api_keys WHERE is_active = 1 AND (provider = 'gemini' OR provider IS NULL)")
+                    rows = await cur.fetchall()
+                    for (kval,) in rows:
+                        if kval not in self.api_keys:
+                            self.api_keys.append(kval)
+        except Exception:
+            pass
 
     async def get_key(self):
         async with self._lock:

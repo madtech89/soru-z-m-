@@ -77,14 +77,18 @@ async def get_db():
 
 def ensure_database_exists():
     """Ensure the MySQL database exists and migrate any new columns cleanly."""
-    conn = pymysql.connect(
-        host=DB_HOST,
-        user=DB_USER,
-        password=DB_PASSWORD,
-        port=DB_PORT,
-        charset="utf8mb4",
-        autocommit=True,
-    )
+    conn_kwargs = {
+        "user": DB_USER,
+        "password": DB_PASSWORD,
+        "charset": "utf8mb4",
+        "autocommit": True,
+    }
+    if os.path.exists("/tmp/mysql.sock") and DB_HOST in ("127.0.0.1", "localhost"):
+        conn_kwargs["unix_socket"] = "/tmp/mysql.sock"
+    else:
+        conn_kwargs["host"] = DB_HOST
+        conn_kwargs["port"] = DB_PORT
+    conn = pymysql.connect(**conn_kwargs)
     try:
         with conn.cursor() as cursor:
             try:
@@ -137,6 +141,18 @@ def ensure_database_exists():
                 q_cols = {row[0] for row in cursor.fetchall()}
                 if "subtopic_id" not in q_cols:
                     cursor.execute("ALTER TABLE `questions` ADD COLUMN `subtopic_id` VARCHAR(36) NULL;")
+
+            # Auto-migrate user_answers columns
+            cursor.execute("SHOW TABLES LIKE 'user_answers';")
+            if cursor.fetchone():
+                cursor.execute("SHOW COLUMNS FROM `user_answers`;")
+                ua_cols = {row[0] for row in cursor.fetchall()}
+                if "mistake_reason" not in ua_cols:
+                    cursor.execute("ALTER TABLE `user_answers` ADD COLUMN `mistake_reason` VARCHAR(50) NULL;")
+                if "is_reviewed" not in ua_cols:
+                    cursor.execute("ALTER TABLE `user_answers` ADD COLUMN `is_reviewed` TINYINT(1) DEFAULT 0;")
+                if "reviewed_at" not in ua_cols:
+                    cursor.execute("ALTER TABLE `user_answers` ADD COLUMN `reviewed_at` VARCHAR(50) NULL;")
     finally:
         conn.close()
 

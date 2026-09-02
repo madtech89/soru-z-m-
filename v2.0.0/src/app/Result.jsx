@@ -260,30 +260,37 @@ export default function Result() {
       </motion.div>
 
       {/* Aksiyon Butonları */}
-      <div className="flex flex-col sm:flex-row gap-3 pt-2">
+      <div className="grid sm:grid-cols-3 gap-3 pt-2">
         <Link
           to={`/app/incele/${r.test_id}/${r.session_id}`}
           state={{ result: r, sessionId: r.session_id }}
           data-testid="result-review"
-          className="flex-1 flex items-center justify-center gap-2 bg-emerald-600 text-white font-bold py-3.5 rounded-2xl hover:bg-emerald-700 transition shadow-md"
+          className="flex items-center justify-center gap-2 bg-emerald-600 text-white font-bold py-3.5 rounded-2xl hover:bg-emerald-700 transition shadow-md text-xs sm:text-sm"
         >
-          <Search size={16} /> Soruları & Çözümleri İncele
+          <Search size={16} /> Çözümleri İncele
+        </Link>
+        <Link
+          to="/app/yanlislarim"
+          data-testid="result-mistakes"
+          className="flex items-center justify-center gap-2 bg-rose-600 text-white font-bold py-3.5 rounded-2xl hover:bg-rose-700 transition shadow-md text-xs sm:text-sm"
+        >
+          <RotateCcw size={16} /> Yanlış Defterime Git
         </Link>
         <Link
           to="/app/eksiklerim"
           data-testid="result-weak"
-          className="flex-1 flex items-center justify-center gap-2 bg-ink text-white font-bold py-3.5 rounded-2xl hover:bg-subject-matematik transition shadow-md"
+          className="flex items-center justify-center gap-2 bg-indigo-600 text-white font-bold py-3.5 rounded-2xl hover:bg-indigo-700 transition shadow-md text-xs sm:text-sm"
         >
-          Eksik Konularıma Git <ArrowRight size={16} />
+          Eksik Konularım <ArrowRight size={16} />
         </Link>
       </div>
 
       <Link
         to="/app/denemeler"
         data-testid="result-again"
-        className="flex items-center justify-center gap-2 border border-zinc-300 bg-white font-bold text-sm py-3 rounded-2xl hover:border-ink transition"
+        className="flex items-center justify-center gap-2 border border-zinc-300 bg-white font-bold text-xs sm:text-sm py-3 rounded-2xl hover:border-ink transition"
       >
-        <RotateCcw size={16} /> Yeni Deneme Sınavı Çöz
+        <RotateCcw size={15} /> Yeni Deneme Sınavı Çöz
       </Link>
     </div>
   );

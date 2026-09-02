@@ -11,7 +11,7 @@ export default function BlogList() {
   const [loading, setLoading] = useState(true);
   const [selectedCat, setSelectedCat] = useState("Tümü");
   const [searchQuery, setSearchQuery] = useState("");
-  const apiUrl = import.meta.env.VITE_API_URL || "http://127.0.0.1:8001/api";
+  const apiUrl = import.meta.env.VITE_API_URL || "/api";
 
   useEffect(() => {
     setLoading(true);

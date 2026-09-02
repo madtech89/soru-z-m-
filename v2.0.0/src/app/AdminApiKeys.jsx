@@ -10,9 +10,11 @@ import { toast } from "sonner";
 
 const PROVIDERS = [
   { id: "gemini", label: "Google Gemini", color: "bg-blue-50 text-blue-700 border-blue-200", dot: "bg-blue-500" },
+  { id: "groq", label: "Groq Cloud (Llama 3.3)", color: "bg-orange-50 text-orange-700 border-orange-200", dot: "bg-orange-500" },
+  { id: "openrouter", label: "OpenRouter (Free & Multi-Model)", color: "bg-purple-50 text-purple-700 border-purple-200", dot: "bg-purple-500" },
   { id: "openai", label: "OpenAI (ChatGPT)", color: "bg-emerald-50 text-emerald-700 border-emerald-200", dot: "bg-emerald-500" },
   { id: "deepseek", label: "DeepSeek", color: "bg-violet-50 text-violet-700 border-violet-200", dot: "bg-violet-500" },
-  { id: "groq", label: "Groq", color: "bg-orange-50 text-orange-700 border-orange-200", dot: "bg-orange-500" },
+  { id: "mistral", label: "Mistral AI", color: "bg-red-50 text-red-700 border-red-200", dot: "bg-red-500" },
   { id: "anthropic", label: "Anthropic Claude", color: "bg-amber-50 text-amber-700 border-amber-200", dot: "bg-amber-500" },
 ];
 
@@ -36,6 +38,9 @@ export default function AdminApiKeys() {
   const [showAdd, setShowAdd] = useState(false);
   const [showValues, setShowValues] = useState({});
   const [form, setForm] = useState({ provider: "gemini", name: "", key_value: "", priority: 1 });
+  const [testingKeyId, setTestingKeyId] = useState(null);
+  const [auditing, setAuditing] = useState(false);
+  const [auditData, setAuditData] = useState(null);
 
   const loadAll = async () => {
     try {
@@ -64,6 +69,39 @@ export default function AdminApiKeys() {
     } catch (e) {
       toast.error(e?.response?.data?.detail || "Eklenemedi");
     } finally { setAdding(false); }
+  };
+
+  const handleRunFullAudit = async () => {
+    setAuditing(true);
+    toast.info("Tüm API anahtarları sitenin fonksiyonlarına (Soru, Koç, Blog) göre test ediliyor...");
+    try {
+      const res = await api.post("/admin/api-keys/audit");
+      if (res.data.ok) {
+        setAuditData(res.data.results);
+        toast.success(`Denetim tamamlandı! Toplam ${res.data.total_tested} anahtar incelendi.`);
+      }
+    } catch (err) {
+      toast.error(err?.response?.data?.detail || "Denetim testi gerçekleştirilemedi.");
+    } finally {
+      setAuditing(false);
+    }
+  };
+
+  const handleTestKey = async (id) => {
+    setTestingKeyId(id);
+    try {
+      const res = await api.post(`/admin/api-keys/${id}/audit`);
+      if (res.data.ok) {
+        toast.success(`Test Başarılı! (${res.data.result.latency_ms}ms) Model: ${res.data.result.tested_model}`);
+      } else {
+        toast.error(res.data.result?.error || "Test başarısız oldu.");
+      }
+      loadAll();
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || "Test isteği gönderilemedi.");
+    } finally {
+      setTestingKeyId(null);
+    }
   };
 
   const toggleActive = async (id, isActive) => {
@@ -98,99 +136,143 @@ export default function AdminApiKeys() {
     </div>
   );
 
-  // Group keys by provider
-  const keysByProvider = {};
-  keys.forEach(k => {
-    if (!keysByProvider[k.provider]) keysByProvider[k.provider] = [];
-    keysByProvider[k.provider].push(k);
-  });
+  const keysByProvider = PROVIDERS.reduce((acc, p) => {
+    acc[p.id] = keys.filter(k => k.provider === p.id);
+    return acc;
+  }, {});
 
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <div className="p-2.5 rounded-xl bg-violet-50">
-            <Key size={20} className="text-violet-600" />
-          </div>
-          <div>
-            <h2 className="text-xl font-heading font-bold text-ink">API Anahtar Yönetimi</h2>
-            <p className="text-sm text-zinc-500">Sistem sırayla dener — biri başarısız olursa diğerine geçer.</p>
-          </div>
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+        <div>
+          <h2 className="text-xl font-bold font-heading text-ink flex items-center gap-2">
+            <Shield className="text-violet-600" size={22} />
+            Yapay Zekâ API Anahtarları & Denetim Laboratuvarı
+          </h2>
+          <p className="text-xs text-zinc-500 mt-0.5">
+            Soru üretimi, koçluk, blog ve müfredat için çoklu sağlayıcı, otomatik model uyumlama ve denetim havuzu.
+          </p>
         </div>
-        <div className="flex gap-2">
-          <button onClick={loadAll} className="flex items-center gap-1.5 px-3 py-2 rounded-xl border border-zinc-200 text-zinc-600 hover:bg-zinc-50 text-sm transition-colors">
-            <RefreshCw size={14} /> Yenile
+        <div className="flex items-center gap-2">
+          <button
+            onClick={handleRunFullAudit}
+            disabled={auditing}
+            className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-amber-500 text-white text-xs font-bold hover:bg-amber-600 shadow-sm transition-colors disabled:opacity-60"
+          >
+            {auditing ? <Loader2 size={13} className="animate-spin" /> : <Zap size={13} />}
+            {auditing ? "Denetleniyor..." : "🔬 Kapsamlı API Denetimi Yap"}
           </button>
-          <button onClick={() => setShowAdd(v => !v)} className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-violet-600 text-white text-sm font-semibold hover:bg-violet-700 transition-colors">
-            <Plus size={15} /> API Key Ekle
+          <button
+            onClick={loadAll}
+            className="flex items-center gap-1.5 px-3 py-2 rounded-xl border border-zinc-200 text-xs font-semibold text-zinc-600 hover:bg-zinc-50"
+          >
+            <RefreshCw size={13} /> Yenile
+          </button>
+          <button
+            onClick={() => setShowAdd(v => !v)}
+            className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-violet-600 text-white text-xs font-semibold hover:bg-violet-700 shadow-sm"
+          >
+            <Plus size={14} /> API Key Ekle
           </button>
         </div>
       </div>
 
-      {/* Add Form */}
+      {/* Audit Results Panel */}
+      {auditData && (
+        <Card className="p-5 border-amber-200 bg-amber-50/40">
+          <div className="flex items-center justify-between mb-3">
+            <h3 className="font-bold text-sm text-ink flex items-center gap-2">
+              <Zap className="text-amber-600" size={16} />
+              Canlı API Denetim & Yetenek Sonuçları
+            </h3>
+            <button onClick={() => setAuditData(null)} className="text-xs text-zinc-500 hover:text-zinc-800">Kapat</button>
+          </div>
+          <div className="grid sm:grid-cols-2 md:grid-cols-3 gap-3">
+            {auditData.map((item, idx) => (
+              <div key={idx} className="p-3 bg-white rounded-xl border border-zinc-200 text-xs space-y-1.5 shadow-sm">
+                <div className="flex items-center justify-between">
+                  <span className="font-bold uppercase text-[10px] px-2 py-0.5 rounded bg-zinc-100 text-zinc-700">{item.provider}</span>
+                  <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${item.is_healthy ? "bg-emerald-100 text-emerald-700" : "bg-red-100 text-red-700"}`}>
+                    {item.is_healthy ? `${item.latency_ms}ms (Sağlıklı)` : "Hatalı"}
+                  </span>
+                </div>
+                <div className="font-mono text-zinc-500 text-[11px] truncate">{item.masked}</div>
+                <div className="flex flex-wrap gap-1 pt-1">
+                  <span className={`px-1.5 py-0.5 rounded text-[10px] font-semibold ${item.capabilities?.question_gen ? "bg-emerald-50 text-emerald-700 border border-emerald-200" : "bg-zinc-100 text-zinc-400"}`}>
+                    Soru: {item.capabilities?.question_gen ? "✓" : "✗"}
+                  </span>
+                  <span className={`px-1.5 py-0.5 rounded text-[10px] font-semibold ${item.capabilities?.coach_chat ? "bg-blue-50 text-blue-700 border border-blue-200" : "bg-zinc-100 text-zinc-400"}`}>
+                    Koç: {item.capabilities?.coach_chat ? "✓" : "✗"}
+                  </span>
+                  <span className={`px-1.5 py-0.5 rounded text-[10px] font-semibold ${item.capabilities?.blog_writer ? "bg-purple-50 text-purple-700 border border-purple-200" : "bg-zinc-100 text-zinc-400"}`}>
+                    Blog: {item.capabilities?.blog_writer ? "✓" : "✗"}
+                  </span>
+                </div>
+                {item.error && <p className="text-[10px] text-red-600 line-clamp-2 mt-1">{item.error}</p>}
+              </div>
+            ))}
+          </div>
+        </Card>
+      )}
+
+      {/* Add Modal/Card */}
       <AnimatePresence>
         {showAdd && (
           <motion.div
             initial={{ opacity: 0, height: 0 }}
             animate={{ opacity: 1, height: "auto" }}
             exit={{ opacity: 0, height: 0 }}
+            transition={{ ease: EASE }}
           >
             <Card className="p-5 border-violet-200 bg-violet-50/30">
-              <h3 className="font-semibold text-ink mb-4 flex items-center gap-2">
-                <Shield size={16} className="text-violet-600" /> Yeni API Anahtarı Ekle
-              </h3>
-              <form onSubmit={handleAdd} className="grid sm:grid-cols-2 gap-3">
+              <h3 className="font-bold text-sm text-ink mb-4">Yeni API Anahtarı Ekle</h3>
+              <form onSubmit={handleAdd} className="grid sm:grid-cols-2 gap-4">
                 <div>
-                  <label className="text-xs font-semibold text-zinc-600 block mb-1">Sağlayıcı (Provider)</label>
-                  <div className="relative">
-                    <select
-                      value={form.provider}
-                      onChange={e => setForm(f => ({ ...f, provider: e.target.value }))}
-                      className="w-full rounded-xl border border-zinc-300 bg-white px-3 py-2.5 text-sm outline-none focus:border-violet-400 appearance-none"
-                    >
-                      {PROVIDERS.map(p => <option key={p.id} value={p.id}>{p.label}</option>)}
-                    </select>
-                    <ChevronDown size={14} className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-400 pointer-events-none" />
-                  </div>
+                  <label className="text-xs font-semibold text-zinc-600 block mb-1">Sağlayıcı</label>
+                  <select
+                    value={form.provider}
+                    onChange={e => setForm(f => ({ ...f, provider: e.target.value }))}
+                    className="w-full rounded-xl border border-zinc-300 bg-white px-3 py-2.5 text-sm outline-none focus:border-violet-400"
+                  >
+                    {PROVIDERS.map(p => (
+                      <option key={p.id} value={p.id}>{p.label}</option>
+                    ))}
+                  </select>
                 </div>
                 <div>
-                  <label className="text-xs font-semibold text-zinc-600 block mb-1">Anahtar Adı (Etiket)</label>
+                  <label className="text-xs font-semibold text-zinc-600 block mb-1">Etiket / İsim</label>
                   <input
+                    type="text"
+                    placeholder="Örn: Gemini Ücretsiz 1, Groq Ana Key..."
                     value={form.name}
                     onChange={e => setForm(f => ({ ...f, name: e.target.value }))}
-                    placeholder="ör. Gemini Key #2"
                     className="w-full rounded-xl border border-zinc-300 bg-white px-3 py-2.5 text-sm outline-none focus:border-violet-400"
                   />
                 </div>
                 <div className="sm:col-span-2">
-                  <label className="text-xs font-semibold text-zinc-600 block mb-1">API Key Değeri</label>
+                  <label className="text-xs font-semibold text-zinc-600 block mb-1">API Anahtarı (Gizli tutulur)</label>
                   <div className="relative">
                     <input
                       type={showValues["new"] ? "text" : "password"}
+                      placeholder="AI API Key yapıştırın (AIzaSy..., gsk_..., sk-...)"
                       value={form.key_value}
                       onChange={e => setForm(f => ({ ...f, key_value: e.target.value }))}
-                      placeholder="AIza... veya sk-..."
-                      className="w-full rounded-xl border border-zinc-300 bg-white px-3 py-2.5 text-sm outline-none focus:border-violet-400 pr-10 font-mono"
+                      className="w-full rounded-xl border border-zinc-300 bg-white px-3 py-2.5 text-sm font-mono outline-none focus:border-violet-400 pr-10"
                     />
-                    <button type="button" onClick={() => setShowValues(v => ({ ...v, new: !v.new }))} className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-400">
+                    <button
+                      type="button"
+                      onClick={() => setShowValues(v => ({ ...v, new: !v.new }))}
+                      className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-400 hover:text-zinc-700"
+                    >
                       {showValues["new"] ? <EyeOff size={15} /> : <Eye size={15} />}
                     </button>
                   </div>
                 </div>
-                <div>
-                  <label className="text-xs font-semibold text-zinc-600 block mb-1">Öncelik (düşük = önce dene)</label>
-                  <input
-                    type="number" min={1} max={10}
-                    value={form.priority}
-                    onChange={e => setForm(f => ({ ...f, priority: parseInt(e.target.value) || 1 }))}
-                    className="w-full rounded-xl border border-zinc-300 bg-white px-3 py-2.5 text-sm outline-none focus:border-violet-400"
-                  />
-                </div>
-                <div className="flex items-end justify-end gap-2">
-                  <button type="button" onClick={() => setShowAdd(false)} className="px-4 py-2.5 rounded-xl border border-zinc-200 text-zinc-600 text-sm hover:bg-zinc-50">İptal</button>
-                  <button type="submit" disabled={adding} className="flex items-center gap-1.5 px-5 py-2.5 rounded-xl bg-violet-600 text-white text-sm font-semibold hover:bg-violet-700 disabled:opacity-60">
-                    {adding ? <Loader2 size={14} className="animate-spin" /> : <Plus size={14} />} Ekle
+                <div className="flex justify-end sm:col-span-2 gap-2">
+                  <button type="button" onClick={() => setShowAdd(false)} className="px-4 py-2 text-xs font-semibold text-zinc-600 hover:underline">İptal</button>
+                  <button type="submit" disabled={adding} className="px-6 py-2 bg-violet-600 text-white text-xs font-semibold rounded-xl hover:bg-violet-700">
+                    {adding ? "Ekleniyor..." : "Kaydet"}
                   </button>
                 </div>
               </form>
@@ -198,27 +280,6 @@ export default function AdminApiKeys() {
           </motion.div>
         )}
       </AnimatePresence>
-
-      {/* Live Status Summary */}
-      {status && (
-        <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
-          {PROVIDERS.map(p => {
-            const pStatus = status[p.id];
-            const total = pStatus?.total_keys || 0;
-            const active = pStatus?.active_keys || 0;
-            return (
-              <Card key={p.id} className={`p-3 border ${total > 0 ? p.color : "border-zinc-100"}`}>
-                <div className="flex items-center gap-1.5 mb-1">
-                  <span className={`h-2 w-2 rounded-full ${total > 0 ? p.dot : "bg-zinc-300"}`} />
-                  <span className="text-xs font-semibold">{p.label}</span>
-                </div>
-                <div className="text-lg font-black font-heading">{active}<span className="text-xs font-normal text-zinc-500">/{total}</span></div>
-                <div className="text-[10px] text-zinc-500">aktif key</div>
-              </Card>
-            );
-          })}
-        </div>
-      )}
 
       {/* Keys Table */}
       {PROVIDERS.map(p => {
@@ -236,7 +297,6 @@ export default function AdminApiKeys() {
                 <tr>
                   <th className="px-4 py-2.5 text-left font-medium">Etiket</th>
                   <th className="px-4 py-2.5 text-left font-medium">Key</th>
-                  <th className="px-4 py-2.5 text-left font-medium">Öncelik</th>
                   <th className="px-4 py-2.5 text-left font-medium">Canlı Durum</th>
                   <th className="px-4 py-2.5 text-left font-medium">Başarı/Hata</th>
                   <th className="px-4 py-2.5 text-right font-medium">İşlem</th>
@@ -248,6 +308,7 @@ export default function AdminApiKeys() {
                   const statusKey = !k.is_active ? "inactive" : (liveInfo?.status || "active");
                   const sc = STATUS_CONFIG[statusKey] || STATUS_CONFIG.active;
                   const StatusIcon = sc.icon;
+                  const isTesting = testingKeyId === k.id;
                   return (
                     <motion.tr
                       key={k.id}
@@ -267,7 +328,6 @@ export default function AdminApiKeys() {
                           </button>
                         </div>
                       </td>
-                      <td className="px-4 py-3 text-zinc-500">{k.priority}</td>
                       <td className="px-4 py-3">
                         <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold ${sc.cls}`}>
                           <StatusIcon size={11} /> {sc.label}
@@ -279,7 +339,16 @@ export default function AdminApiKeys() {
                         <span className="text-red-500 font-semibold">{liveInfo?.fails || 0}✗</span>
                       </td>
                       <td className="px-4 py-3 text-right">
-                        <div className="flex items-center justify-end gap-1">
+                        <div className="flex items-center justify-end gap-1.5">
+                          <button
+                            onClick={() => handleTestKey(k.id)}
+                            disabled={isTesting}
+                            className="flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-semibold bg-violet-50 text-violet-700 hover:bg-violet-100 disabled:opacity-60 transition-colors"
+                            title="Anahtarı canlı test et"
+                          >
+                            {isTesting ? <Loader2 size={12} className="animate-spin" /> : <Zap size={12} />}
+                            {isTesting ? "Test..." : "Test Et"}
+                          </button>
                           <button
                             onClick={() => toggleActive(k.id, k.is_active)}
                             className={`px-2.5 py-1 rounded-lg text-xs font-semibold transition-colors ${k.is_active ? "bg-zinc-100 text-zinc-600 hover:bg-zinc-200" : "bg-emerald-50 text-emerald-700 hover:bg-emerald-100"}`}

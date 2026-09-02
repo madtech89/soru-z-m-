@@ -1,5 +1,5 @@
 import { Link } from "react-router-dom";
-import { motion, useScroll, useTransform } from "framer-motion";
+import { motion, AnimatePresence, useScroll, useTransform } from "framer-motion";
 import Lenis from "lenis";
 import { useEffect, useRef, useState } from "react";
 import {
@@ -8,13 +8,13 @@ import {
   Calculator, Compass, Clock, BookCopy, Library, GraduationCap as GradIcon,
 } from "lucide-react";
 import { SUBJECT_TONES } from "@/lib/subjects";
-import { fetchExams, fetchSubjects, EXAM_CATEGORIES } from "@/lib/api";
+import { fetchExams, fetchSubjects, EXAM_CATEGORIES, DEFAULT_EXAMS } from "@/lib/api";
 import { useAuth } from "@/context/AuthContext";
 
 const EASE = [0.16, 1, 0.3, 1];
 
 const HERO_IMG = "https://images.unsplash.com/photo-1728455635901-bb16530faf40?crop=entropy&cs=srgb&fm=jpg&q=85";
-const ANALYSIS_IMG = "https://images.unsplash.com/photo-1514369118554-e20d9352f30a?crop=entropy&cs=srgb&fm=jpg&q=85";
+const ANALYSIS_IMG = "https://images.unsplash.com/photo-1460925895917-afdab827c52f?crop=entropy&cs=srgb&fm=jpg&q=85";
 const LIBRARY_IMG = "https://images.unsplash.com/photo-1521587760476-6c12a4b040da?crop=entropy&cs=srgb&fm=jpg&q=85";
 
 const Reveal = ({ children, delay = 0, y = 26, className = "" }) => (
@@ -269,7 +269,7 @@ export default function Landing() {
   };
 
   useEffect(() => {
-    fetch(`${import.meta.env.VITE_API_URL || "http://127.0.0.1:8001/api"}/blog?limit=3`)
+    fetch(`${import.meta.env.VITE_API_URL || "/api"}/blog?limit=3`)
       .then((res) => res.json())
       .then((data) => setBlogs(data || []))
       .catch(() => {});
@@ -427,9 +427,11 @@ export default function Landing() {
                 <a href="#dongu" className="px-7 py-3.5 rounded-full border border-zinc-300 font-semibold hover:border-ink transition-colors">Nasıl çalışır?</a>
               </motion.div>
               <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.9, duration: 0.8 }} className="mt-10 flex items-center gap-6 text-sm text-zinc-500">
-                <div><span className="font-heading font-bold text-ink text-xl">25+</span> sınav türü</div>
+                <div><span className="font-heading font-bold text-ink text-xl">20+</span> Sınav Türü</div>
                 <div className="h-8 w-px bg-zinc-200" />
-                <div><span className="font-heading font-bold text-ink text-xl">100K+</span> soru kapasitesi</div>
+                <div><span className="font-heading font-bold text-ink text-xl">2026</span> Güncel Müfredat</div>
+                <div className="h-8 w-px bg-zinc-200" />
+                <div><span className="font-heading font-bold text-ink text-xl">%100</span> Kişiselleştirilmiş</div>
               </motion.div>
             </div>
             <div className="lg:col-span-5 relative">
@@ -438,15 +440,15 @@ export default function Landing() {
                   <motion.img src={HERO_IMG} alt="Odaklanmış öğrenci" style={{ y: imgY, scale: imgScale }} className="absolute inset-0 h-[115%] w-full object-cover" />
                   <div className="absolute inset-0 bg-gradient-to-t from-black/25 to-transparent" />
                 </div>
-                <motion.div style={{ y: badgeY }} className="absolute -left-5 top-10 glass rounded-2xl border border-white/60 shadow-xl p-4 w-44 animate-floaty">
-                  <div className="text-xs text-zinc-500">Fonksiyonlar</div>
-                  <div className="font-heading font-bold text-2xl text-subject-matematik">%82</div>
-                  <div className="text-[11px] font-medium text-subject-fen">İyi durumda ↑</div>
+                <motion.div style={{ y: badgeY }} className="absolute -left-5 top-10 glass rounded-2xl border border-white/60 shadow-xl p-4 w-48 animate-floaty">
+                  <div className="text-xs text-zinc-500 font-medium">Fonksiyonlar & Grafikler</div>
+                  <div className="font-heading font-bold text-2xl text-subject-matematik">%84</div>
+                  <div className="text-[11px] font-bold text-emerald-600">Güçlü Seviye ↑</div>
                 </motion.div>
-                <motion.div style={{ y: useTransform(scrollYProgress, [0, 1], [0, -110]) }} className="absolute -right-4 bottom-12 glass rounded-2xl border border-white/60 shadow-xl p-4 w-40">
-                  <div className="text-xs text-zinc-500">Problemler</div>
-                  <div className="font-heading font-bold text-2xl text-subject-turkce">%39</div>
-                  <div className="text-[11px] font-medium text-subject-turkce">Kritik eksik</div>
+                <motion.div style={{ y: useTransform(scrollYProgress, [0, 1], [0, -110]) }} className="absolute -right-4 bottom-12 glass rounded-2xl border border-white/60 shadow-xl p-4 w-44">
+                  <div className="text-xs text-zinc-500 font-medium">Sayı Problemleri</div>
+                  <div className="font-heading font-bold text-2xl text-rose-600">%38</div>
+                  <div className="text-[11px] font-bold text-rose-600">Kritik Eksik (Öncelikli)</div>
                 </motion.div>
               </motion.div>
             </div>
@@ -465,61 +467,59 @@ export default function Landing() {
         </div>
       </div>
 
+      {/* ─── 3 ADIMDA BAŞARI DÖNGÜSÜ ─── */}
       <section id="dongu" className="relative py-24 sm:py-32">
         <div className="mx-auto max-w-7xl px-5 sm:px-8">
           <Reveal>
             <div className="max-w-2xl">
-              <div className="font-editorial italic text-subject-matematik text-lg mb-3">— öğrenme döngüsü</div>
+              <div className="font-editorial italic text-subject-matematik text-lg mb-3">— nasıl çalışır?</div>
               <h2 className="font-heading font-extrabold tracking-tighter text-4xl sm:text-5xl leading-[1.02]">
-                Soru çözmek başlangıç.<br /><span className="text-zinc-400">Gelişim asıl hedef.</span>
+                Rastgele soru çözme.<br /><span className="text-zinc-400">3 adımda netlerini artır.</span>
               </h2>
             </div>
           </Reveal>
-          <div className="mt-14 grid sm:grid-cols-2 lg:grid-cols-3 gap-5">
-            {CHAPTERS.map((c, i) => {
-              const t = SUBJECT_TONES[c.slug];
-              const Icon = c.icon;
-              const wide = i === 6;
-              return (
-                <Reveal key={c.n} delay={(i % 3) * 0.08} className={wide ? "sm:col-span-2 lg:col-span-1" : ""}>
-                  <div className="group h-full rounded-3xl bg-white border border-zinc-200 p-7 hover:-translate-y-1.5 transition-transform duration-300" style={{ boxShadow: "0 8px 32px rgba(0,0,0,0.04)" }}>
-                    <div className="flex items-start justify-between">
-                      <span className="h-11 w-11 rounded-xl grid place-items-center" style={{ background: t.soft }}><Icon size={19} style={{ color: t.hex }} /></span>
-                      <span className="font-editorial text-4xl text-zinc-200 group-hover:text-zinc-300 transition-colors">{c.n}</span>
-                    </div>
-                    <h3 className="mt-6 font-heading font-bold text-xl">{c.t}</h3>
-                    <p className="mt-2 text-zinc-500 leading-relaxed text-sm">{c.d}</p>
-                  </div>
-                </Reveal>
-              );
-            })}
-          </div>
-        </div>
-      </section>
-
-      <section id="dersler" className="relative py-16">
-        <div className="mx-auto max-w-7xl px-5 sm:px-8">
-          <Reveal>
-            <h2 className="font-heading font-extrabold tracking-tighter text-3xl sm:text-4xl mb-3">Her ders kendi rengiyle.</h2>
-            <p className="text-zinc-500 max-w-xl">Arayüz çözdüğün derse göre renk değiştirir — göz yormadan, odağı artırarak.</p>
-          </Reveal>
-          <div className="mt-10 grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4">
-            {Object.entries(SUBJECT_TONES).slice(0, 5).map(([k, t], i) => (
-              <Reveal key={k} delay={i * 0.06}>
-                <div className="rounded-3xl p-6 h-40 flex flex-col justify-between border transition-transform hover:-translate-y-1" style={{ background: t.soft, borderColor: t.ring }}>
-                  <span className="h-9 w-9 rounded-full" style={{ background: t.hex }} />
-                  <div>
-                    <div className="font-heading font-bold text-lg" style={{ color: t.hex }}>{t.name}</div>
-                    <div className="text-xs text-zinc-500">konu bazlı analiz</div>
-                  </div>
+          <div className="mt-14 grid sm:grid-cols-3 gap-6">
+            <Reveal delay={0.05}>
+              <div className="h-full rounded-3xl bg-white border border-zinc-200 p-8 shadow-sm hover:shadow-md transition">
+                <div className="w-12 h-12 rounded-2xl bg-indigo-50 text-indigo-600 grid place-items-center font-heading font-extrabold text-xl mb-6">
+                  1
                 </div>
-              </Reveal>
-            ))}
+                <h3 className="font-heading font-bold text-xl text-zinc-900">Seviyeni Belirle</h3>
+                <p className="mt-3 text-sm text-zinc-500 leading-relaxed">
+                  15-20 soruluk adaptif teşhis testiyle tüm derslerdeki güçlü ve zayıf konularını nokta atışı çıkar.
+                </p>
+              </div>
+            </Reveal>
+
+            <Reveal delay={0.12}>
+              <div className="h-full rounded-3xl bg-white border border-zinc-200 p-8 shadow-sm hover:shadow-md transition">
+                <div className="w-12 h-12 rounded-2xl bg-emerald-50 text-emerald-600 grid place-items-center font-heading font-extrabold text-xl mb-6">
+                  2
+                </div>
+                <h3 className="font-heading font-bold text-xl text-zinc-900">Bugünün Planını Uygula</h3>
+                <p className="mt-3 text-sm text-zinc-500 leading-relaxed">
+                  Kişisel kapasitene göre hazırlanan günlük 5 net görevi (özet, soru pratiği, paragraf rutini) tamamla.
+                </p>
+              </div>
+            </Reveal>
+
+            <Reveal delay={0.18}>
+              <div className="h-full rounded-3xl bg-white border border-zinc-200 p-8 shadow-sm hover:shadow-md transition">
+                <div className="w-12 h-12 rounded-2xl bg-amber-50 text-amber-600 grid place-items-center font-heading font-extrabold text-xl mb-6">
+                  3
+                </div>
+                <h3 className="font-heading font-bold text-xl text-zinc-900">Yanlışlarını Kapat</h3>
+                <p className="mt-3 text-sm text-zinc-500 leading-relaxed">
+                  Yanlış Defteri üzerinden hatalarını sınıflandır (dikkat, bilgi, işlem) ve aralıklı tekrarla eksiklerini sıfırla.
+                </p>
+              </div>
+            </Reveal>
           </div>
         </div>
       </section>
 
-      <section id="ozellikler" className="relative py-24">
+      {/* ─── ÖZELLİKLER VE YETERLİLİK MOTORU ─── */}
+      <section id="ozellikler" className="relative py-20 bg-zinc-50 border-y border-zinc-200">
         <div className="mx-auto max-w-7xl px-5 sm:px-8 grid lg:grid-cols-2 gap-12 items-center">
           <Reveal>
             <div className="relative overflow-hidden rounded-[2rem] border border-zinc-200 shadow-xl" style={{ aspectRatio: "5/4" }}>
@@ -528,14 +528,25 @@ export default function Landing() {
           </Reveal>
           <Reveal delay={0.1}>
             <div>
-              <div className="font-editorial italic text-subject-turkce text-lg mb-3">— eksik konu tespiti</div>
-              <h2 className="font-heading font-extrabold tracking-tighter text-4xl sm:text-5xl leading-[1.02] mb-6">Sadece doğru/yanlış değil.</h2>
-              <p className="text-zinc-600 leading-relaxed mb-6">
-                Başarı oranı, çözülen soru sayısı, ortalama süre, zorluk ve son 7/30 günlük trend birlikte değerlendirilir. Her konuya bir <b>yeterlilik skoru</b> verilir.
+              <div className="font-editorial italic text-subject-turkce text-lg mb-3">— ölçme & yeterlilik motoru</div>
+              <h2 className="font-heading font-extrabold tracking-tighter text-3xl sm:text-4xl leading-[1.05] mb-6">
+                Sadece doğru/yanlış değil.<br />Bilimsel Yeterlilik Analizi.
+              </h2>
+              <p className="text-zinc-600 leading-relaxed mb-6 text-sm">
+                Soru zorluk katsayıları (kolay, orta, zor), çözüm süresi, hata nedenleri ve Ebbinghaus unutma eğrisi birlikte değerlendirilir. Her konuya 0-100 arasında güvenilir bir <b>yeterlilik skoru</b> verilir.
               </p>
-              <ul className="space-y-3">
-                {["Konu bazlı yeterlilik: İyi / Geliştirilmeli / Kritik Eksik", "Otomatik ders notu yönlendirmesi", "Platform Türkiye sıralaması ve liderlik tablosu", "Deneme motoru: süre, işaretleme, otomatik kayıt"].map((f) => (
-                  <li key={f} className="flex items-start gap-3 text-zinc-700"><CheckCircle2 size={19} className="text-subject-fen mt-0.5 shrink-0" /><span>{f}</span></li>
+              <ul className="space-y-3 text-xs sm:text-sm">
+                {[
+                  "Kritik Eksik (<%40), Geliştirilmeli (%40-%64), Güçlü (%65+) sınıflandırması",
+                  "Ölçüm Güven Seviyesi (Düşük / Orta / Yüksek güvenilirlik rozetleri)",
+                  "Zaman aşımı ve unutma riski tespitiyle otomatik aralıklı tekrar alarmı",
+                  "Hata Nedenleri Analizi (Bilgi eksikliği, dikkat hatası, işlem hatası)",
+                  "Doğrudan ilgili ders notuna ve pekiştirme sorularına tek tıkla yönlendirme"
+                ].map((f) => (
+                  <li key={f} className="flex items-start gap-2.5 text-zinc-700">
+                    <CheckCircle2 size={17} className="text-emerald-600 mt-0.5 shrink-0" />
+                    <span>{f}</span>
+                  </li>
                 ))}
               </ul>
             </div>
@@ -543,26 +554,86 @@ export default function Landing() {
         </div>
       </section>
 
+      {/* ─── SIKÇA SORULAN SORULAR (SSS / FAQ) ─── */}
+      <section id="sss" className="relative py-24 bg-white">
+        <div className="mx-auto max-w-4xl px-5 sm:px-8">
+          <Reveal>
+            <div className="text-center max-w-xl mx-auto mb-14">
+              <div className="font-editorial italic text-indigo-600 text-lg mb-2">— merak edilenler</div>
+              <h2 className="font-heading font-extrabold tracking-tight text-3xl sm:text-4xl text-zinc-900">
+                Sıkça Sorulan Sorular
+              </h2>
+              <p className="text-xs sm:text-sm text-zinc-500 mt-2">
+                HedefMatik'in çalışma mantığı ve sınav hazırlık süreci hakkında bilmeniz gerekenler.
+              </p>
+            </div>
+          </Reveal>
+
+          <div className="space-y-4">
+            {[
+              {
+                q: "HedefMatik sıradan bir soru bankasından nasıl farklıdır?",
+                a: "HedefMatik sıradan bir içerik deposu değildir. Önce seviyenizi teşhis eder, her gün kapasitenize göre 'Bugünün Planı' görevlerini belirler ve çözdüğünüz her sorunun analizini tutarak aralıklı tekrarla eksiklerinizi kapatır."
+              },
+              {
+                q: "Seviye tespit testini çözmek için kayıt olmak zorunda mıyım?",
+                a: "Hayır! Seviye tespit testini kayıtsız olarak çözebilir, eksik konu analizlerinizi ve 7 günlük kişisel çalışma planınızı ücretsiz görebilirsiniz. Sonuçlarınızı kaydetmek istediğinizde tek tıkla ücretsiz hesap oluşturabilirsiniz."
+              },
+              {
+                q: "Sorular 2026 ÖSYM ve MEB müfredatına uygun mu?",
+                a: "Evet. Tüm sorular, konular, alt kazanımlar ve soru dağılımları 2026 ÖSYM & MEB güncel müfredat standartlarına tam uyumlu olarak hazırlanır ve denetlenir."
+              },
+              {
+                q: "Yanlış Defteri sistemi netlerimi nasıl artırır?",
+                a: "Denemelerde veya soru çözerken yaptığınız hataları 'Bilgi Eksikliği', 'Dikkat Hatası', 'İşlem Hatası' gibi kategorilere ayırarak kaydeder. Sistem, unuttuğunuz konuları aralıklı tekrar algoritmasıyla periyodik olarak önünüze getirir."
+              },
+              {
+                q: "AI Koç bana nasıl yardımcı olur?",
+                a: "AI Koç, genel motivasyon cümleleri yerine gerçek netlerinize, çözme sürelerinize ve en zayıf konularınıza bakarak 'Bugün hangi konudan kaç soru çözmelisin?' sorusuna nokta atışı stratejik yanıt verir."
+              }
+            ].map((faq, i) => (
+              <Reveal key={i} delay={i * 0.05}>
+                <details className="group bg-zinc-50 rounded-2xl p-5 border border-zinc-200 open:bg-indigo-50/30 open:border-indigo-200 transition">
+                  <summary className="font-heading font-bold text-sm sm:text-base text-zinc-900 cursor-pointer list-none flex items-center justify-between gap-4">
+                    <span>{faq.q}</span>
+                    <ChevronDown size={18} className="text-zinc-400 group-open:rotate-180 transition-transform shrink-0" />
+                  </summary>
+                  <p className="mt-3 text-xs sm:text-sm text-zinc-600 leading-relaxed pt-2 border-t border-zinc-200/60">
+                    {faq.a}
+                  </p>
+                </details>
+              </Reveal>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      {/* ─── CALL TO ACTION (CTA) ─── */}
       <section className="relative py-16">
         <div className="mx-auto max-w-7xl px-5 sm:px-8">
           <Reveal>
-            <div className="relative overflow-hidden rounded-[2.5rem] bg-ink text-white px-8 sm:px-16 py-16 sm:py-20">
-              <img src={LIBRARY_IMG} alt="" className="absolute inset-0 h-full w-full object-cover opacity-20" />
-              <div className="relative max-w-2xl">
-                <h2 className="font-heading font-extrabold tracking-tighter text-4xl sm:text-6xl leading-[0.98]">
-                  Hedefine giden yolu<br /><span className="font-editorial italic font-medium">bugün</span> çiz.
+            <div className="relative overflow-hidden rounded-[2.5rem] bg-zinc-900 text-white px-8 sm:px-16 py-16 sm:py-20 shadow-2xl">
+              <img src={LIBRARY_IMG} alt="" className="absolute inset-0 h-full w-full object-cover opacity-15" />
+              <div className="relative max-w-2xl space-y-4">
+                <span className="text-xs font-bold uppercase tracking-wider text-amber-300">Hedefine Ulaşmak İçin İlk Adım</span>
+                <h2 className="font-heading font-extrabold tracking-tighter text-4xl sm:text-5xl leading-[1.02]">
+                  Eksiklerini keşfet, hedefine doğru çalış.
                 </h2>
-                <p className="mt-5 text-white/70 text-lg max-w-md">Ücretsiz hesap oluştur, sınavını seç ve ilk denemeni çöz.</p>
-                <Link to="/onboarding" data-testid="cta-register" className="mt-8 inline-flex items-center gap-2 bg-white text-ink font-semibold px-7 py-3.5 rounded-full hover:bg-subject-matematik hover:text-white transition-colors group">
-                  Ücretsiz başla<ArrowRight size={18} className="group-hover:translate-x-1 transition-transform" />
-                </Link>
+                <p className="text-white/70 text-sm sm:text-base max-w-lg leading-relaxed">
+                  20 soruluk ücretsiz seviye tespit testini çöz, güçlü ve zayıf konularını anında gör.
+                </p>
+                <div className="pt-4">
+                  <Link to="/onboarding" data-testid="cta-register" className="inline-flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white font-bold px-8 py-4 rounded-full shadow-lg shadow-indigo-600/30 transition group text-sm">
+                    Ücretsiz Seviye Testini Başlat <ArrowRight size={18} className="group-hover:translate-x-1 transition-transform" />
+                  </Link>
+                </div>
               </div>
             </div>
           </Reveal>
         </div>
       </section>
 
-      {/* 🚀 HEDEFMATİK GÜNDEM & SINAV REHBERİ BLOG KARTI */}
+      {/* ─── REHBER BLOG KARTI ─── */}
       {blogs.length > 0 && (
         <section id="blog" className="relative py-20 bg-zinc-50 border-t border-zinc-200">
           <div className="mx-auto max-w-7xl px-5 sm:px-8">
@@ -612,17 +683,51 @@ export default function Landing() {
         </section>
       )}
 
-      <footer className="relative border-t border-zinc-200 py-12 mt-8">
-
-        <div className="mx-auto max-w-7xl px-5 sm:px-8 flex flex-col sm:flex-row items-center justify-between gap-4 text-sm text-zinc-500">
-          <div className="flex items-center gap-2">
-            <span className="h-6 w-6 rounded-md bg-subject-matematik grid place-items-center"><Sparkles size={12} className="text-white" /></span>
-            <span className="font-heading font-bold text-ink">HedefMatik</span>
+      {/* ─── FOOTER ─── */}
+      <footer className="relative border-t border-zinc-200 py-12 bg-white">
+        <div className="mx-auto max-w-7xl px-5 sm:px-8 space-y-8">
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-8 text-xs text-zinc-500">
+            <div>
+              <div className="flex items-center gap-2 mb-3">
+                <span className="h-6 w-6 rounded-md bg-indigo-600 grid place-items-center text-white font-bold"><Sparkles size={12} /></span>
+                <span className="font-heading font-extrabold text-sm text-zinc-900">HedefMatik</span>
+              </div>
+              <p className="leading-relaxed text-zinc-500">
+                Türkiye'nin kişiselleştirilmiş akıllı sınav hazırlık ve tercih işletim sistemi platformu.
+              </p>
+            </div>
+            <div>
+              <h4 className="font-bold text-zinc-900 mb-3">Öne Çıkan Sınavlar</h4>
+              <ul className="space-y-1.5">
+                <li><Link to="/onboarding" className="hover:text-indigo-600">YKS TYT & AYT Hazırlık</Link></li>
+                <li><Link to="/onboarding" className="hover:text-indigo-600">KPSS Lisans & Alan Bilgisi</Link></li>
+                <li><Link to="/onboarding" className="hover:text-indigo-600">LGS Sınavı</Link></li>
+                <li><Link to="/onboarding" className="hover:text-indigo-600">ALES & DGS</Link></li>
+              </ul>
+            </div>
+            <div>
+              <h4 className="font-bold text-zinc-900 mb-3">Modüller & Araçlar</h4>
+              <ul className="space-y-1.5">
+                <li><Link to="/app/puan-hesapla" className="hover:text-indigo-600">YKS & KPSS Puan Hesaplama</Link></li>
+                <li><Link to="/app/tercih-robotu" className="hover:text-indigo-600">Üniversite Tercih Robotu</Link></li>
+                <li><Link to="/app/geri-sayim" className="hover:text-indigo-600">Sınav Takvimi & Geri Sayım</Link></li>
+                <li><Link to="/blog" className="hover:text-indigo-600">Rehberlik Blogu</Link></li>
+              </ul>
+            </div>
+            <div>
+              <h4 className="font-bold text-zinc-900 mb-3">Kurumsal & Hukuki</h4>
+              <ul className="space-y-1.5">
+                <li><span className="hover:text-indigo-600 cursor-pointer">KVKK Aydınlatma Metni</span></li>
+                <li><span className="hover:text-indigo-600 cursor-pointer">Kullanıcı Sözleşmesi</span></li>
+                <li><span className="hover:text-indigo-600 cursor-pointer">Çerez Politikası</span></li>
+                <li><span className="hover:text-indigo-600 cursor-pointer">İletişim & Destek</span></li>
+              </ul>
+            </div>
           </div>
-          <p>© 2026 HedefMatik (hedefmatik.com) · Türkiye Sınav Hazırlık ve Tercih Platformu</p>
-          <div className="flex gap-6">
-            <Link to="/login" className="hover:text-ink transition-colors">Giriş</Link>
-            <Link to="/register" className="hover:text-ink transition-colors">Kayıt</Link>
+
+          <div className="pt-6 border-t border-zinc-150 flex flex-col sm:flex-row items-center justify-between gap-4 text-[11px] text-zinc-400">
+            <p>© 2026 HedefMatik (hedefmatik.com) · Tüm Hakları Saklıdır.</p>
+            <p>ÖSYM & MEB sınav standartlarına uyumlu kişisel eğitim platformu.</p>
           </div>
         </div>
       </footer>

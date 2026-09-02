@@ -107,6 +107,61 @@ class ApiKey(Base):
         }
 
 
+class AIGenerationJob(Base):
+    """Hostinger kuyruk sistemi için AI soru üretim görev tablosu"""
+    __tablename__ = "ai_generation_jobs"
+
+    id = Column(String(36), primary_key=True)
+    status = Column(String(20), default="pending", index=True)  # pending, processing, completed, failed, retry, cancelled
+    provider = Column(String(50), nullable=True)
+    api_key_id = Column(String(36), nullable=True)              # Hangi key ile çalıştı
+    model = Column(String(100), nullable=True)
+    
+    exam_id = Column(String(36), nullable=True)
+    exam_name = Column(String(100), nullable=True)
+    subject_id = Column(String(36), nullable=True)
+    subject_name = Column(String(100), nullable=True)
+    topic_id = Column(String(36), nullable=True)
+    topic_name = Column(String(100), nullable=True)
+    subtopic_id = Column(String(36), nullable=True)
+    subtopic_name = Column(String(100), nullable=True)
+    
+    target_count = Column(Integer, default=5)
+    difficulty = Column(String(50), default="orta")
+    style = Column(String(50), default="standard")
+    
+    attempt_count = Column(Integer, default=0)
+    max_retries = Column(Integer, default=3)
+    http_status = Column(Integer, nullable=True)
+    error_message = Column(Text, nullable=True)
+    response_time = Column(Float, nullable=True)
+    
+    created_at = Column(String(50), nullable=False)
+    started_at = Column(String(50), nullable=True)
+    completed_at = Column(String(50), nullable=True)
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "status": self.status,
+            "provider": self.provider,
+            "model": self.model,
+            "exam_name": self.exam_name,
+            "subject_name": self.subject_name,
+            "topic_name": self.topic_name,
+            "subtopic_name": self.subtopic_name,
+            "target_count": self.target_count,
+            "attempt_count": self.attempt_count,
+            "http_status": self.http_status,
+            "error_message": self.error_message,
+            "response_time": self.response_time,
+            "created_at": self.created_at,
+            "started_at": self.started_at,
+            "completed_at": self.completed_at,
+        }
+
+
+
 class Exam(Base):
     __tablename__ = "exams"
 
@@ -326,6 +381,9 @@ class UserAnswer(Base):
     is_correct = Column(Boolean, nullable=False)
     is_blank = Column(Boolean, default=False)
     time_spent = Column(Integer, default=0)
+    mistake_reason = Column(String(50), nullable=True) # bilgi_eksikligi, dikkat_hatasi, islem_hatasi, etc.
+    is_reviewed = Column(Boolean, default=False)
+    reviewed_at = Column(String(50), nullable=True)
     exam_session_id = Column(String(36), nullable=True)
     created_at = Column(String(50), index=True, nullable=False)
 
@@ -347,7 +405,33 @@ class UserAnswer(Base):
             "is_correct": self.is_correct,
             "is_blank": self.is_blank or False,
             "time_spent": self.time_spent or 0,
+            "mistake_reason": self.mistake_reason,
+            "is_reviewed": self.is_reviewed or False,
+            "reviewed_at": self.reviewed_at,
             "exam_session_id": self.exam_session_id,
+            "created_at": self.created_at,
+        }
+
+
+class QuestionFeedback(Base):
+    __tablename__ = "question_feedbacks"
+
+    id = Column(String(36), primary_key=True)
+    question_id = Column(String(36), ForeignKey("questions.id", ondelete="CASCADE"), index=True, nullable=False)
+    user_id = Column(String(36), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    reason = Column(String(100), nullable=False) # hatali_cevap, yazim_hatasi, eksik_gorsel, mufredat_disi, vb.
+    description = Column(Text, default="")
+    status = Column(String(50), default="pending") # pending, reviewed, resolved, dismissed
+    created_at = Column(String(50), nullable=False)
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "question_id": self.question_id,
+            "user_id": self.user_id,
+            "reason": self.reason,
+            "description": self.description or "",
+            "status": self.status or "pending",
             "created_at": self.created_at,
         }
 

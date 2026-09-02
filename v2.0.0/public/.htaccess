@@ -5,9 +5,9 @@
   RewriteEngine On
   RewriteBase /
 
-  # /api ve /uploads isteklerini yerel FastAPI backend'e yönlendir (Reverse Proxy)
-  RewriteRule ^api/(.*)$ http://127.0.0.1:8005/api/$1 [P,L]
-  RewriteRule ^uploads/(.*)$ http://127.0.0.1:8005/uploads/$1 [P,L]
+  # /api ve /uploads isteklerini yerel FastAPI backend gateway'e yönlendir (Ultra-fast PHP Proxy)
+  RewriteRule ^api/(.*)$ api_gateway.php [QSA,L]
+  RewriteRule ^uploads/(.*)$ api_gateway.php [QSA,L]
 
   # HTTPS Yönlendirmesi (SSL Zorunlu)
   RewriteCond %{HTTPS} off
@@ -28,8 +28,15 @@
   Header set X-Frame-Options "SAMEORIGIN"
   Header set X-XSS-Protection "1; mode=block"
 
-  # Static asset caching
+  # HTML dosyaları için önbelleği devre dışı bırak (yeni derlemelerin anında yüklenmesi için)
+  <FilesMatch "\.(html|htm)$">
+    Header set Cache-Control "no-cache, no-store, must-revalidate, max-age=0"
+    Header set Pragma "no-cache"
+    Header set Expires "0"
+  </FilesMatch>
+
+  # Parmak izli (hash'li) statik varlıklar için uzun süreli önbellekleme
   <FilesMatch "\.(ico|pdf|flv|jpg|jpeg|png|gif|js|css|swf|webp|woff|woff2)$">
-    Header set Cache-Control "max-age=31536000, public"
+    Header set Cache-Control "max-age=31536000, public, immutable"
   </FilesMatch>
 </IfModule>

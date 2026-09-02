@@ -49,9 +49,10 @@ def create_refresh_token(user_id: str) -> str:
 
 
 def set_auth_cookies(response: Response, access: str, refresh: str):
-    response.set_cookie("access_token", access, httponly=True, secure=False,
+    is_prod = os.environ.get("FRONTEND_URL", "").startswith("https")
+    response.set_cookie("access_token", access, httponly=True, secure=is_prod,
                         samesite="lax", max_age=ACCESS_MIN * 60, path="/")
-    response.set_cookie("refresh_token", refresh, httponly=True, secure=False,
+    response.set_cookie("refresh_token", refresh, httponly=True, secure=is_prod,
                         samesite="lax", max_age=REFRESH_DAYS * 86400, path="/")
 
 

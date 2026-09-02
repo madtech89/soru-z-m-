@@ -1,6 +1,6 @@
 """
-auto_blog.py — AI Otomatik SEO Haber Blogu Yazarı
-===================================================
+auto_blog.py — AI Otomatik SEO Haber Blogu Yazarı & Bölüm Makale Fabrikası
+========================================================================
 Güncel ve popüler gelişmeleri tarar (eğitim gündemi, YKS/KPSS haberleri,
 genel gündem vb.), SEO uyumlu, kısa, yormayan ve HedefMatik'e trafik çeken
 özgün blog yazıları üretir ve veritabanına kaydeder.
@@ -10,6 +10,8 @@ import os
 import sys
 import uuid
 import json
+import re
+import random
 import asyncio
 import logging
 from pathlib import Path
@@ -26,8 +28,18 @@ from sqlalchemy import select, desc
 from database import AsyncSessionLocal
 import models as M
 from seed import now_iso
+from ai import call_resilient_ai
 
 logger = logging.getLogger("sinav.auto_blog")
+
+
+def generate_slug(text: str) -> str:
+    """Türkçe karakterleri dönüştürerek temiz URL slug üretir."""
+    tr_map = str.maketrans("ğĞıİöÖüÜşŞçÇ", "gGiIoOuUsScC")
+    text = (text or "").translate(tr_map).lower()
+    text = re.sub(r'[^a-z0-9\s-]', '', text)
+    text = re.sub(r'[\s-]+', '-', text).strip('-')
+    return text[:80] or "blog-yazisi"
 
 
 # ─── Sıcak Gündem Haber Konuları / Havuz ──────────────────────────────────────
@@ -36,9 +48,12 @@ NEWS_PROMPTS = [
     "KPSS başvurularında son gün ne zaman, nelere dikkat edilmeli",
     "MEB müfredat değişiklikleri 2026: Öğrencileri ne bekliyor",
     "Yapay zeka sınav hazırlığında nasıl kullanılır, HedefMatik koçluğu",
-    "Trump'ın yeni ekonomi kararlarının küresel pazara ve Türkiye'ye yansımaları",
+    "Sınav maratonunda zaman yönetimi ve Pomodoro tekniği",
     "ALES ve DGS adayları için zaman kazanma taktikleri",
     "Sınav stresini azaltmanın bilimsel yolları ve odaklanma yöntemleri",
+    "YKS Matematik netlerini 1 ayda 5 net artırmanın yolları",
+    "TYT Türkçe Paragraf sorularında hızlanma teknikleri",
+    "2026 YKS sayısal ve eşit ağırlık derece öğrencilerinin çalışma programı",
 ]
 
 AUTO_BLOG_PROMPT = """Sen Türkiye'nin en popüler eğitim ve genel gündem portalının baş editörüsün.
@@ -56,95 +71,76 @@ Yazıyı şu kurallara göre yaz:
   "title": "Çarpıcı Blog Başlığı",
   "summary": "SEO meta açıklaması olacak 1-2 cümlelik özet.",
   "content": "Markdown formatında yazılmış, alt başlıkları ve maddeleri olan blog içeriği.",
-  "category": "Gündem" veya "Sınav Rehberi" veya "Eğitim",
+  "category": "Gündem",
   "seo_keywords": "virgülle ayrılmış seo kelimeleri"
 }}
 """
 
-async def get_active_db_keys() -> dict:
-    """MySQL veritabanındaki aktif API anahtarlarını yükler."""
-    keys = {"gemini": [], "openai": []}
-    try:
-        async with AsyncSessionLocal() as session:
-            res = await session.execute(
-                select(M.ApiKey).where(M.ApiKey.is_active == True)
-            )
-            db_keys = res.scalars().all()
-            for k in db_keys:
-                prov = k.provider.lower()
-                if prov in keys:
-                    keys[prov].append(k.key_value)
-    except Exception as e:
-        logger.warning(f"Could not load API keys from DB: {e}")
-    return keys
+IMAGES_POOL = [
+    "https://images.unsplash.com/photo-1434030216411-0b793f4b4173?q=80&w=800&auto=format&fit=crop",
+    "https://images.unsplash.com/photo-1522202176988-66273c2fd55f?q=80&w=800&auto=format&fit=crop",
+    "https://images.unsplash.com/photo-1516321318423-f06f85e504b3?q=80&w=800&auto=format&fit=crop",
+    "https://images.unsplash.com/photo-1531482615713-2afd69097998?q=80&w=800&auto=format&fit=crop",
+    "https://images.unsplash.com/photo-1454165804606-c3d57bc86b40?q=80&w=800&auto=format&fit=crop",
+    "https://images.unsplash.com/photo-1581091226825-a6a2a5aee158?q=80&w=800&auto=format&fit=crop",
+    "https://images.unsplash.com/photo-1576091160399-112ba8d25d1d?q=80&w=800&auto=format&fit=crop",
+]
 
 async def generate_blog_content(topic: str) -> dict:
-    """Gemini veya OpenAI ile SEO blogu üretir."""
-    # 1. API keyleri oku (Env + DB)
-    db_keys = await get_active_db_keys()
-    
-    gemini_keys = db_keys.get("gemini", [])
-    env_gemini = os.getenv("GEMINI_API_KEY", "") or os.getenv("GOOGLE_API_KEY", "")
-    if env_gemini:
-        gemini_keys.append(env_gemini)
-        
-    openai_keys = db_keys.get("openai", [])
-    env_openai = os.getenv("OPENAI_API_KEY", "")
-    if env_openai:
-        openai_keys.append(env_openai)
-
+    """Çoklu AI Sağlayıcı Havuzu (Gemini, Groq, OpenRouter, DeepSeek) ile SEO blogu üretir."""
     prompt = AUTO_BLOG_PROMPT.format(topic=topic)
+    
+    try:
+        raw_res = await call_resilient_ai(
+            system="Sen profesyonel bir blog yazarı ve SEO uzmanısın. Yanıtını yalnızca geçerli bir JSON nesnesi olarak ver.",
+            prompt=prompt,
+            is_json=True
+        )
+        data = json.loads(raw_res)
+        if isinstance(data, dict) and data.get("title"):
+            return data
+    except Exception as e:
+        logger.warning(f"Resilient AI blog üretimi hatası: {e}")
 
-    # Gemini ile üret
-    for key in gemini_keys:
-        try:
-            url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={key}"
-            body = {
-                "contents": [{"parts": [{"text": prompt}]}],
-                "generationConfig": {
-                    "temperature": 0.7,
-                    "maxOutputTokens": 2048,
-                    "responseMimeType": "application/json"
-                }
-            }
-            async with httpx.AsyncClient(timeout=45) as client:
-                r = await client.post(url, json=body)
-                r.raise_for_status()
-                text = r.json()["candidates"][0]["content"]["parts"][0]["text"]
-                return json.loads(text)
-        except Exception as e:
-            logger.warning(f"Gemini blog üretimi başarısız: {e}")
-
-    # OpenAI ile üret
-    for key in openai_keys:
-        try:
-            headers = {"Authorization": f"Bearer {key}", "Content-Type": "application/json"}
-            body = {
-                "model": "gpt-4o-mini",
-                "messages": [
-                    {"role": "system", "content": "Sen profesyonel bir blog yazarı ve SEO uzmanısın. Yalnızca JSON döndür."},
-                    {"role": "user", "content": prompt}
-                ],
-                "temperature": 0.7,
-                "response_format": {"type": "json_object"}
-            }
-            async with httpx.AsyncClient(timeout=45) as client:
-                r = await client.post("https://api.openai.com/v1/chat/completions", json=body, headers=headers)
-                r.raise_for_status()
-                text = r.json()["choices"][0]["message"]["content"]
-                return json.loads(text)
-        except Exception as e:
-            logger.warning(f"OpenAI blog üretimi başarısız: {e}")
-
-    # Eğer API key bulunamazsa, zengin bir yerel yedek blog oluştur (Zero-Downtime)
-    logger.info("Yapay zeka anahtarı bulunamadı, yerel hazır SEO blogu üretiliyor...")
+    # Sıfır kesinti (Zero-Downtime) zengin yedek şablon
+    logger.info("Yapay zeka yanıt vermedi, zengin yerel şablon oluşturuluyor...")
     return {
         "title": f"2026 Sınav Sürecinde Başarılı Olmanın 5 Altın Kuralı",
         "summary": "Sınavlara hazırlanırken zamanı doğru yönetmek ve stresle başa çıkmak için uygulamanız gereken en etkili ders çalışma taktikleri.",
         "content": f"## 📅 Sınav Maratonunda Zaman Yönetimi\n\nSınavlara hazırlanırken en büyük problem zaman yetersizliği değil, zamanın verimsiz kullanılmasıdır. Her gün düzenli olarak çözülen sorular ve konu tekrarları sizi hedefinize ulaştırır.\n\n### 📝 1. Pomodoro Tekniğini Kullanın\n25 dakika odaklanmış ders çalışma ve 5 dakika kısa mola döngüleri, zihninizin sürekli taze ve açık kalmasını sağlar.\n\n### 🎯 2. Eksik Olduğunuz Konuları Tespit Edin\nHatalarınız aslında en büyük öğretmenlerinizdir. Her deneme sonrasında yanlış yaptığınız konuları listeleyin ve o alanlara özel pekiştirme testleri çözün.\n\n### 🚀 HedefMatik AI ile Sınavlara Akıllıca Hazırlanın\n\nSınavla hazırlanırken yapay zeka desteğini arkanıza alın! **hedefmatik.com** platformu, size özel hazırlanan ders notları ve pratik pekiştirme testleriyle sınav sürecinizi kolaylaştırır.",
-        "category": "Sınav Rehberi",
+        "category": "Gündem",
         "seo_keywords": "sınav rehberi, verimli çalışma, net artırma, ders çalışma teknikleri"
     }
+
+
+async def write_auto_blog(custom_topic: str = None) -> dict:
+    """Tekil bir sıcak gündem/eğitim haberi üretir ve veritabanına kaydeder."""
+    topic = custom_topic or random.choice(NEWS_PROMPTS)
+    
+    art = await generate_blog_content(topic)
+    title = art.get("title", f"{topic} Hakkında Önemli Gelişmeler")
+    slug = f"{generate_slug(title)}-{str(uuid.uuid4())[:5]}"
+    now_str = now_iso()
+    
+    async with AsyncSessionLocal() as session:
+        post = M.BlogPost(
+            id=str(uuid.uuid4()),
+            title=title,
+            slug=slug,
+            summary=art.get("summary", ""),
+            content=art.get("content", ""),
+            image_url=random.choice(IMAGES_POOL),
+            category=art.get("category", "Gündem"),
+            seo_keywords=art.get("seo_keywords", "yks, kpss, sinav rehberi, gundem"),
+            author="HedefMatik Editör Masası",
+            status="published",
+            views=random.randint(45, 320),
+            created_at=now_str,
+            updated_at=now_str,
+        )
+        session.add(post)
+        await session.commit()
+        return post.to_dict()
 
 
 # ─── BÖLÜM & MESLEK REHBERİ KATALOĞU (Tüm Puan Türleri) ───────────────────────────
@@ -208,62 +204,21 @@ Makalenin içereceği zorunlu başlıklar ve zengin içerik:
 
 async def generate_department_seo_article(department_name: str, score_type: str) -> dict:
     """Belirli bir bölüm için ultra detaylı, SEO uyumlu kariyer ve tercih rehberi makalesi üretir."""
-    db_keys = await get_active_db_keys()
-    
-    gemini_keys = db_keys.get("gemini", [])
-    env_gemini = os.getenv("GEMINI_API_KEY", "") or os.getenv("GOOGLE_API_KEY", "")
-    if env_gemini and env_gemini not in gemini_keys:
-        gemini_keys.append(env_gemini)
-        
-    openai_keys = db_keys.get("openai", [])
-    env_openai = os.getenv("OPENAI_API_KEY", "")
-    if env_openai and env_openai not in openai_keys:
-        openai_keys.append(env_openai)
-
     prompt = DEPARTMENT_SEO_PROMPT.format(department_name=department_name, score_type=score_type)
 
-    # 1. Gemini ile dene
-    for key in gemini_keys:
-        try:
-            url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={key}"
-            body = {
-                "contents": [{"parts": [{"text": prompt}]}],
-                "generationConfig": {
-                    "temperature": 0.7,
-                    "maxOutputTokens": 3000,
-                    "responseMimeType": "application/json"
-                }
-            }
-            async with httpx.AsyncClient(timeout=60) as client:
-                r = await client.post(url, json=body)
-                r.raise_for_status()
-                text = r.json()["candidates"][0]["content"]["parts"][0]["text"]
-                return json.loads(text)
-        except Exception as e:
-            logger.warning(f"Gemini bölüm makalesi üretimi başarısız ({department_name}): {e}")
+    try:
+        raw_res = await call_resilient_ai(
+            system="Sen profesyonel bir üniversite rehberlik yazarı ve SEO uzmanısın. Yanıtını yalnızca geçerli bir JSON nesnesi olarak ver.",
+            prompt=prompt,
+            is_json=True
+        )
+        data = json.loads(raw_res)
+        if isinstance(data, dict) and data.get("title"):
+            return data
+    except Exception as e:
+        logger.warning(f"Resilient AI bölüm makalesi hatası ({department_name}): {e}")
 
-    # 2. OpenAI ile dene
-    for key in openai_keys:
-        try:
-            headers = {"Authorization": f"Bearer {key}", "Content-Type": "application/json"}
-            body = {
-                "model": "gpt-4o-mini",
-                "messages": [
-                    {"role": "system", "content": "Sen profesyonel bir üniversite rehberlik yazarı ve SEO uzmanısın. Yalnızca JSON döndür."},
-                    {"role": "user", "content": prompt}
-                ],
-                "temperature": 0.7,
-                "response_format": {"type": "json_object"}
-            }
-            async with httpx.AsyncClient(timeout=60) as client:
-                r = await client.post("https://api.openai.com/v1/chat/completions", json=body, headers=headers)
-                r.raise_for_status()
-                text = r.json()["choices"][0]["message"]["content"]
-                return json.loads(text)
-        except Exception as e:
-            logger.warning(f"OpenAI bölüm makalesi üretimi başarısız ({department_name}): {e}")
-
-    # 3. Sıfır kesinti (Zero-downtime) yedek zengin şablon
+    # Sıfır kesinti (Zero-downtime) yedek zengin şablon
     return {
         "title": f"{department_name} Nedir? 2026 Maaşları, Taban Puanları ve Geleceği",
         "summary": f"{department_name} bölümü nedir, ne iş yapar? 2026 güncel maaşları, iş imkanları, taban puanları ve Türkiye ile dünyadaki geleceği.",
@@ -331,17 +286,6 @@ async def run_bulk_department_articles_generation(score_types: list[str] = None,
 
     DEPT_GEN_STATUS["logs"].append(f"🚀 AI Bölüm & Meslek Rehberi Makale Fabrikası başlatıldı. Toplam hedef: {len(target_tasks)} bölüm.")
 
-    # Unsplash tematik görselleri
-    IMAGES_POOL = [
-        "https://images.unsplash.com/photo-1522202176988-66273c2fd55f?q=80&w=800&auto=format&fit=crop",
-        "https://images.unsplash.com/photo-1516321318423-f06f85e504b3?q=80&w=800&auto=format&fit=crop",
-        "https://images.unsplash.com/photo-1434030216411-0b793f4b4173?q=80&w=800&auto=format&fit=crop",
-        "https://images.unsplash.com/photo-1531482615713-2afd69097998?q=80&w=800&auto=format&fit=crop",
-        "https://images.unsplash.com/photo-1454165804606-c3d57bc86b40?q=80&w=800&auto=format&fit=crop",
-        "https://images.unsplash.com/photo-1581091226825-a6a2a5aee158?q=80&w=800&auto=format&fit=crop",
-        "https://images.unsplash.com/photo-1576091160399-112ba8d25d1d?q=80&w=800&auto=format&fit=crop",
-    ]
-
     try:
         for idx, (dept_name, stype) in enumerate(target_tasks):
             if DEPT_GEN_STATUS["cancel"]:
@@ -401,4 +345,3 @@ async def run_bulk_department_articles_generation(score_types: list[str] = None,
     finally:
         DEPT_GEN_STATUS["running"] = False
         DEPT_GEN_STATUS["completed_at"] = now_iso()
-

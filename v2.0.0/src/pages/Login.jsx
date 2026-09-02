@@ -45,9 +45,13 @@ export default function Login() {
     e.preventDefault();
     setLoading(true);
     try {
-      await login(email, password);
+      const loggedUser = await login(email, password);
       toast.success("Hoş geldin!");
-      nav("/app");
+      if (loggedUser?.role === "admin") {
+        nav("/app/admin");
+      } else {
+        nav("/app");
+      }
     } catch (err) {
       toast.error(err.message || "Giriş yapılamadı.");
     } finally {

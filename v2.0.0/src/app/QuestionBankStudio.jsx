@@ -46,12 +46,14 @@ export default function QuestionBankStudio({ exams = [], onRefreshStats }) {
   const [filterExam, setFilterExam] = useState("");
   const [filterSubject, setFilterSubject] = useState("");
   const [filterTopic, setFilterTopic] = useState("");
+  const [filterSubtopic, setFilterSubtopic] = useState("");
   const [filterDifficulty, setFilterDifficulty] = useState("");
   const [filterYear, setFilterYear] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
 
   const [subjects, setSubjects] = useState([]);
   const [topics, setTopics] = useState([]);
+  const [subtopics, setSubtopics] = useState([]);
 
   // PDF Extraction State
   const [pdfExam, setPdfExam] = useState("");
@@ -98,6 +100,15 @@ export default function QuestionBankStudio({ exams = [], onRefreshStats }) {
       setFilterTopic("");
     }
   }, [filterExam, filterSubject]);
+
+  useEffect(() => {
+    if (filterTopic) {
+      fetchSubtopics(filterTopic).then(setSubtopics).catch(() => setSubtopics([]));
+    } else {
+      setSubtopics([]);
+      setFilterSubtopic("");
+    }
+  }, [filterTopic]);
 
   // Load bulk cascading
   useEffect(() => {
@@ -237,6 +248,7 @@ export default function QuestionBankStudio({ exams = [], onRefreshStats }) {
       if (filterExam) params.exam_id = filterExam;
       if (filterSubject) params.subject_id = filterSubject;
       if (filterTopic) params.topic_id = filterTopic;
+      if (filterSubtopic) params.subtopic_id = filterSubtopic;
       if (filterDifficulty) params.difficulty = filterDifficulty;
       if (filterYear) params.year = filterYear;
       if (searchQuery) params.search = searchQuery;
@@ -249,7 +261,7 @@ export default function QuestionBankStudio({ exams = [], onRefreshStats }) {
     } finally {
       setLoading(false);
     }
-  }, [page, filterExam, filterSubject, filterTopic, filterDifficulty, filterYear, searchQuery]);
+  }, [filterExam, filterSubject, filterTopic, filterSubtopic, filterDifficulty, filterYear, searchQuery, page]);
 
   useEffect(() => {
     if (subTab === "list") {
@@ -763,8 +775,8 @@ export default function QuestionBankStudio({ exams = [], onRefreshStats }) {
         <div className="space-y-4">
           {/* Filtreleme Çubuğu */}
           <Card className="p-5">
-            <div className="grid sm:grid-cols-2 lg:grid-cols-6 gap-3">
-              <div className="lg:col-span-2">
+            <div className="grid sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
+              <div className="sm:col-span-2 lg:col-span-2">
                 <div className="relative">
                   <Search size={15} className="absolute left-3 top-3 text-zinc-400" />
                   <input
@@ -780,10 +792,10 @@ export default function QuestionBankStudio({ exams = [], onRefreshStats }) {
               <div>
                 <select
                   value={filterExam}
-                  onChange={(e) => { setFilterExam(e.target.value); setPage(1); }}
+                  onChange={(e) => { setFilterExam(e.target.value); setFilterSubject(""); setFilterTopic(""); setFilterSubtopic(""); setPage(1); }}
                   className={inputCls}
                 >
-                  <option value="">Tüm Sınavlar</option>
+                  <option value="">1. Tüm Sınavlar</option>
                   {exams.map((e) => <option key={e.id} value={e.id}>{e.name}</option>)}
                 </select>
               </div>
@@ -791,12 +803,36 @@ export default function QuestionBankStudio({ exams = [], onRefreshStats }) {
               <div>
                 <select
                   value={filterSubject}
-                  onChange={(e) => { setFilterSubject(e.target.value); setPage(1); }}
+                  onChange={(e) => { setFilterSubject(e.target.value); setFilterTopic(""); setFilterSubtopic(""); setPage(1); }}
                   className={inputCls}
                   disabled={!filterExam}
                 >
-                  <option value="">Tüm Dersler</option>
+                  <option value="">2. Tüm Dersler</option>
                   {subjects.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+                </select>
+              </div>
+
+              <div>
+                <select
+                  value={filterTopic}
+                  onChange={(e) => { setFilterTopic(e.target.value); setFilterSubtopic(""); setPage(1); }}
+                  className={inputCls}
+                  disabled={!filterSubject}
+                >
+                  <option value="">3. Tüm Ana Konular</option>
+                  {topics.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
+                </select>
+              </div>
+
+              <div>
+                <select
+                  value={filterSubtopic}
+                  onChange={(e) => { setFilterSubtopic(e.target.value); setPage(1); }}
+                  className={inputCls}
+                  disabled={!filterTopic || subtopics.length === 0}
+                >
+                  <option value="">4. Tüm Alt Konular ({subtopics.length})</option>
+                  {subtopics.map((st) => <option key={st.id} value={st.id}>{st.name}</option>)}
                 </select>
               </div>
 
@@ -819,9 +855,9 @@ export default function QuestionBankStudio({ exams = [], onRefreshStats }) {
                   onChange={(e) => { setFilterYear(e.target.value); setPage(1); }}
                   className={inputCls}
                 >
-                  <option value="">Yıl (2005 - 2025)</option>
-                  {Array.from({ length: 21 }, (_, i) => 2025 - i).map((y) => (
-                    <option key={y} value={y}>{y} Yılı Çıkmış</option>
+                  <option value="">Yıl (2005 - 2026)</option>
+                  {Array.from({ length: 22 }, (_, i) => 2026 - i).map((y) => (
+                    <option key={y} value={y}>{y} Yılı Çıkmış / Özgün</option>
                   ))}
                 </select>
               </div>

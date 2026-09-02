@@ -307,6 +307,14 @@ export default function PuanHesapla() {
                 <ArrowRight size={16} />
               </Link>
             </div>
+
+            {/* Bilgilendirme ve Yasal Uyarı */}
+            <div className="mt-4 p-3.5 rounded-2xl bg-amber-50/70 border border-amber-200/80 text-[11px] text-amber-900 leading-relaxed flex items-start gap-2">
+              <Info size={15} className="text-amber-600 shrink-0 mt-0.5" />
+              <span>
+                <strong>2026 ÖSYM / MEB Katsayı Modeli:</strong> Bu hesaplama tahmini standart sapma ve katsayı modellerine dayanır. Resmî sonuç belgesi yerine geçmez, tercih ve hedef belirleme simülasyonu amaçlıdır.
+              </span>
+            </div>
           </Card>
         </div>
       </div>

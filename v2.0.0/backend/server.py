@@ -8,6 +8,7 @@ import logging
 import math
 import asyncio
 import random
+import time
 from datetime import datetime, timezone, timedelta
 
 
@@ -32,6 +33,8 @@ import models as M
 import auth as A
 import storage as S
 import ai as AICoach
+from proficiency_engine import calculate_topic_proficiency
+import config
 from seed import seed_content, seed_extras, now_iso
 from seed_past_exams import seed_past_exam_questions
 from seed_comprehensive_curriculum import seed_comprehensive_curriculum
@@ -48,6 +51,13 @@ logger = logging.getLogger("sinav")
 # ---------- Dependencies ----------
 async def current_user(request: Request, db: AsyncSession = Depends(get_db)):
     return await A.get_current_user(request, db)
+
+
+async def current_user_optional(request: Request, db: AsyncSession = Depends(get_db)):
+    try:
+        return await A.get_current_user(request, db)
+    except Exception:
+        return None
 
 
 async def admin_user(request: Request, db: AsyncSession = Depends(get_db)):
@@ -821,11 +831,426 @@ async def review_test(test_id: str, session_id: str, user: dict = Depends(curren
             "time_spent": ans.time_spent if ans else 0,
         })
 
+# ─── DIAGNOSTIC LEVEL & PLACEMENT TEST ENGINE ────────────────────────────────
+
+# Standard official total question counts for major Turkish examinations
+OFFICIAL_EXAM_QUESTION_COUNTS = {
+    # 120 Questions standard -> Diagnostic Placement = 30 Questions (1/4)
+    "TYT": 120,
+    "KPSS": 120,
+    "KPSS-ONLISANS": 120,
+    "KPSS-LISE": 120,
+    "MSU": 120,
+    "DUS": 120,
+
+    # 90 Questions standard -> Diagnostic Placement = 23 Questions (round(90 / 4))
+    "LGS": 90,
+
+    # 80 Questions standard -> Diagnostic Placement = 20 Questions (1/4)
+    "AYT": 80,
+    "KPSS-EGITIM": 80,
+    "YDS": 80,
+    "YOKDIL": 80,
+
+    # 100 Questions standard -> Diagnostic Placement = 25 Questions (1/4)
+    "DGS": 100,
+    "ALES": 100,
+    "SMMM": 100,
+    "HAKIMLIK": 100,
+    "KPSS-A": 100,
+
+    # TUS: Tek oturum / genel seviye tespiti standardı 100 soru -> 25 soru
+    "TUS": 100,
+}
+
+
+def get_standard_exam_question_count(exam: M.Exam) -> int:
+    """Returns the official full-exam question count (e.g. 120 for TYT, 90 for LGS)."""
+    if exam.scoring_config and isinstance(exam.scoring_config, dict):
+        if "standard_questions" in exam.scoring_config:
+            return int(exam.scoring_config["standard_questions"])
+        if "total_questions" in exam.scoring_config:
+            return int(exam.scoring_config["total_questions"])
+
+    etype = (exam.exam_type or "").upper().strip()
+    if etype in OFFICIAL_EXAM_QUESTION_COUNTS:
+        return OFFICIAL_EXAM_QUESTION_COUNTS[etype]
+
+    name_upper = (exam.name or "").upper()
+    if "TYT" in name_upper or "MSÜ" in name_upper or "MSU" in name_upper:
+        return 120
+    if "LGS" in name_upper:
+        return 90
+    if "AYT" in name_upper or "YDS" in name_upper or "YÖKDİL" in name_upper or "YOKDIL" in name_upper:
+        return 80
+    if "DGS" in name_upper or "ALES" in name_upper or "SMMM" in name_upper or "HAKİMLİK" in name_upper:
+        return 100
+    if "KPSS" in name_upper:
+        if "EĞİTİM" in name_upper or "EGITIM" in name_upper:
+            return 80
+        return 120
+    if "TUS" in name_upper or "DUS" in name_upper:
+        return 100
+
+    return 120  # Default standard exam size
+
+
+@api.get("/placement-test/{exam_id}")
+async def get_diagnostic_placement_test(
+    exam_id: str,
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Builds an intelligent diagnostic placement test for the selected exam.
+    Question count is strictly 1/4 of the standard official exam size:
+    e.g. 120-question exam (TYT/KPSS) -> 30 questions,
+         90-question exam (LGS) -> 23 questions,
+         80-question exam (AYT) -> 20 questions,
+         100-question exam (DGS/ALES) -> 25 questions.
+    Questions are distributed proportionally across all exam subjects.
+    Attaches subject_name and topic_name for accurate weak-topic diagnosis.
+    """
+    VALID_STATUSES = ["active", "published"]
+
+    e_res = await db.execute(select(M.Exam).where(M.Exam.id == exam_id))
+    exam = e_res.scalars().first()
+    if not exam:
+        raise HTTPException(status_code=404, detail="Sınav bulunamadı.")
+
+    # Calculate 1/4 of official standard exam question count
+    standard_full_count = get_standard_exam_question_count(exam)
+    target_placement_count = max(15, round(standard_full_count / 4))
+
+    # Get subjects for this exam
+    s_res = await db.execute(select(M.Subject).where(M.Subject.exam_id == exam_id).order_by(M.Subject.order))
+    subjects = s_res.scalars().all()
+    subject_name_map = {s.id: s.name for s in subjects}
+
+    # Get topics for mapping
+    t_res = await db.execute(
+        select(M.Topic.id, M.Topic.name, M.Topic.subject_id)
+        .where(M.Topic.subject_id.in_([s.id for s in subjects]))
+    )
+    topic_map = {row[0]: {"name": row[1], "subject_id": row[2]} for row in t_res.all()}
+
+    selected_questions: List[M.Question] = []
+    seen_q_ids = set()
+
+    # Distribute target questions across subjects proportionally
+    num_subjects = max(1, len(subjects))
+    base_per_subj = target_placement_count // num_subjects
+    remainder = target_placement_count % num_subjects
+
+    for idx, subj in enumerate(subjects):
+        quota = base_per_subj + (1 if idx < remainder else 0)
+        if quota <= 0:
+            quota = 1
+
+        try:
+            q_res = await db.execute(
+                select(M.Question)
+                .where(and_(
+                    M.Question.exam_id == exam_id,
+                    M.Question.subject_id == subj.id,
+                    M.Question.status.in_(VALID_STATUSES)
+                ))
+                .order_by(func.rand())
+                .limit(quota)
+            )
+            subj_qs = q_res.scalars().all()
+        except Exception:
+            q_res = await db.execute(
+                select(M.Question)
+                .where(and_(
+                    M.Question.exam_id == exam_id,
+                    M.Question.subject_id == subj.id,
+                    M.Question.status.in_(VALID_STATUSES)
+                ))
+                .limit(quota * 2)
+            )
+            subj_qs = q_res.scalars().all()
+
+        for q in subj_qs:
+            if q.id not in seen_q_ids:
+                selected_questions.append(q)
+                seen_q_ids.add(q.id)
+
+    # If some subjects had fewer questions, backfill from entire exam bank up to target_placement_count
+    if len(selected_questions) < target_placement_count:
+        needed = target_placement_count - len(selected_questions)
+        try:
+            backfill_res = await db.execute(
+                select(M.Question)
+                .where(and_(
+                    M.Question.exam_id == exam_id,
+                    M.Question.status.in_(VALID_STATUSES)
+                ))
+                .order_by(func.rand())
+                .limit(needed + 15)
+            )
+            candidates = backfill_res.scalars().all()
+        except Exception:
+            backfill_res = await db.execute(
+                select(M.Question)
+                .where(and_(
+                    M.Question.exam_id == exam_id,
+                    M.Question.status.in_(VALID_STATUSES)
+                ))
+                .limit(needed + 15)
+            )
+            candidates = backfill_res.scalars().all()
+
+        for q in candidates:
+            if q.id not in seen_q_ids:
+                selected_questions.append(q)
+                seen_q_ids.add(q.id)
+            if len(selected_questions) >= target_placement_count:
+                break
+
+    # If exam bank has zero questions at all, fallback to general active/published questions
+    if len(selected_questions) == 0:
+        try:
+            fallback_res = await db.execute(
+                select(M.Question)
+                .where(M.Question.status.in_(VALID_STATUSES))
+                .order_by(func.rand())
+                .limit(target_placement_count)
+            )
+        except Exception:
+            fallback_res = await db.execute(
+                select(M.Question)
+                .where(M.Question.status.in_(VALID_STATUSES))
+                .limit(target_placement_count)
+            )
+        selected_questions = list(fallback_res.scalars().all())
+
+    # Shuffle for a natural mixed exam experience
+    import random
+    random.shuffle(selected_questions)
+
+    # Determine duration based on official per-question pacing
+    score_cfg = exam.scoring_config or {}
+    sec_per_q = score_cfg.get("seconds_per_question") or 75
+    duration_min = max(15, round((len(selected_questions) * sec_per_q) / 60))
+
+    # Format questions with enriched subject_name & topic_name
+    formatted_questions = []
+    for q in selected_questions:
+        qd = q.to_dict()
+        s_name = subject_name_map.get(q.subject_id)
+        if not s_name:
+            s_name = topic_map.get(q.topic_id, {}).get("subject_id")
+            s_name = subject_name_map.get(s_name, "Genel")
+        t_name = topic_map.get(q.topic_id, {}).get("name", s_name)
+        qd["subject_name"] = s_name
+        qd["topic_name"] = t_name
+        formatted_questions.append(qd)
+
     return {
-        "test": test.to_dict(),
-        "session_id": session_id,
-        "items": items,
+        "id": f"diagnostic-{exam_id}-{int(time.time())}",
+        "exam_id": exam.id,
+        "exam_name": exam.name,
+        "category": exam.category,
+        "standard_full_count": standard_full_count,
+        "duration_minutes": duration_min,
+        "total_questions": len(formatted_questions),
+        "target_placement_count": target_placement_count,
+        "questions": formatted_questions,
     }
+
+
+class PlacementEvaluateIn(BaseModel):
+    exam_id: str
+    answers: Dict[str, str] = {}
+    time_spent_seconds: int = 0
+    user_id: Optional[str] = None
+
+
+@api.post("/placement-test/evaluate")
+async def evaluate_diagnostic_placement_test(
+    body: PlacementEvaluateIn,
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Evaluates student's diagnostic test answers, calculates subject/topic proficiency,
+    extracts critical weaknesses, and constructs the 7-day personalized onboarding roadmap.
+    """
+    e_res = await db.execute(select(M.Exam).where(M.Exam.id == body.exam_id))
+    exam = e_res.scalars().first()
+    if not exam:
+        raise HTTPException(status_code=404, detail="Sınav bulunamadı.")
+
+    q_ids = list(body.answers.keys())
+    q_map: Dict[str, M.Question] = {}
+    if q_ids:
+        q_res = await db.execute(select(M.Question).where(M.Question.id.in_(q_ids)))
+        q_map = {q.id: q for q in q_res.scalars().all()}
+
+    # Subject & Topic lookup
+    s_res = await db.execute(select(M.Subject).where(M.Subject.exam_id == body.exam_id))
+    subjects = {s.id: s.name for s in s_res.scalars().all()}
+
+    t_res = await db.execute(select(M.Topic).where(M.Topic.exam_id == body.exam_id))
+    topics = {t.id: t.name for t in t_res.scalars().all()}
+
+    correct = 0
+    wrong = 0
+    blank = 0
+    subject_stats: Dict[str, Dict[str, Any]] = {}
+    topic_stats: Dict[str, Dict[str, Any]] = {}
+    session_id = f"placement-eval-{uuid.uuid4()}"
+    now_str = now_iso()
+
+    for qid, selected_ans in body.answers.items():
+        q = q_map.get(qid)
+        if not q:
+            continue
+
+        is_blank = not selected_ans or selected_ans.strip() == ""
+        is_correct = (not is_blank) and (selected_ans.strip().upper() == q.correct_answer.strip().upper())
+
+        if is_correct:
+            correct += 1
+        elif is_blank:
+            blank += 1
+        else:
+            wrong += 1
+
+        # Subject aggregation
+        s_name = subjects.get(q.subject_id, "Genel")
+        if s_name not in subject_stats:
+            subject_stats[s_name] = {"name": s_name, "total": 0, "correct": 0, "wrong": 0, "blank": 0}
+        subject_stats[s_name]["total"] += 1
+        if is_correct:
+            subject_stats[s_name]["correct"] += 1
+        elif is_blank:
+            subject_stats[s_name]["blank"] += 1
+        else:
+            subject_stats[s_name]["wrong"] += 1
+
+        # Topic aggregation
+        t_name = topics.get(q.topic_id, s_name)
+        if t_name not in topic_stats:
+            topic_stats[t_name] = {"topic_id": q.topic_id, "topic_name": t_name, "subject_name": s_name, "total": 0, "correct": 0, "wrong": 0, "blank": 0}
+        topic_stats[t_name]["total"] += 1
+        if is_correct:
+            topic_stats[t_name]["correct"] += 1
+        elif is_blank:
+            topic_stats[t_name]["blank"] += 1
+        else:
+            topic_stats[t_name]["wrong"] += 1
+
+        # If user_id is provided, save user answers
+        if body.user_id:
+            db.add(M.UserAnswer(
+                id=str(uuid.uuid4()),
+                user_id=body.user_id,
+                question_id=q.id,
+                exam_id=q.exam_id,
+                subject_id=q.subject_id,
+                topic_id=q.topic_id,
+                selected_answer=selected_ans or "",
+                correct_answer=q.correct_answer,
+                is_correct=is_correct,
+                is_blank=is_blank,
+                time_spent=round(body.time_spent_seconds / max(1, len(body.answers))),
+                exam_session_id=session_id,
+                created_at=now_str,
+            ))
+
+    total = correct + wrong + blank
+    penalty = (exam.scoring_config or {}).get("wrong_penalty", 0.25)
+    net = round(correct - (wrong * penalty), 2)
+    success_rate = round((correct / max(1, total)) * 100)
+    estimated_score = round(max(100.0, 100.0 + (net * (400.0 / max(1, total * 0.9)))), 1)
+
+    # Classify Weak & Strong Topics
+    weak_topics = []
+    strong_topics = []
+    for t_data in topic_stats.values():
+        t_tot = t_data["total"]
+        t_cor = t_data["correct"]
+        t_pct = round((t_cor / max(1, t_tot)) * 100)
+        t_entry = {
+            "name": t_data["topic_name"],
+            "subject": t_data["subject_name"],
+            "total": t_tot,
+            "correct": t_cor,
+            "percentage": t_pct,
+            "status": "critical" if t_pct < 40 else "moderate" if t_pct < 75 else "strong"
+        }
+        if t_pct < 75:
+            weak_topics.append(t_entry)
+        else:
+            strong_topics.append(t_entry)
+
+    # Sort weak topics: critical first
+    weak_topics.sort(key=lambda x: x["percentage"])
+
+    # Generate 7-Day Personalized Roadmap Tasks based on weaknesses
+    first_week_roadmap = []
+    days = ["Pazartesi", "Salı", "Çarşamba", "Perşembe", "Cuma", "Cumartesi", "Pazar"]
+    for i, day in enumerate(days):
+        target_weak = weak_topics[i % len(weak_topics)] if weak_topics else {"name": "Temel Kavramlar", "subject": "Genel"}
+        first_week_roadmap.append({
+            "day": day,
+            "day_number": i + 1,
+            "subject": target_weak.get("subject", "Genel"),
+            "topic": target_weak.get("name", "Genel Tekrar"),
+            "task_title": f"{target_weak.get('name')} Konu Özeti & 15 Soru Çözümü",
+            "duration_minutes": 45,
+            "task_type": "concept_and_practice" if i < 5 else "weekly_review",
+            "why": f"Seviye tespit testinde {target_weak.get('name')} konusunda %{target_weak.get('percentage', 0)} başarı görüldü."
+        })
+
+    # Save to user account if user_id given
+    if body.user_id:
+        u_res = await db.execute(select(M.User).where(M.User.id == body.user_id))
+        user_obj = u_res.scalars().first()
+        if user_obj:
+            user_obj.placement_completed = True
+            user_obj.target_exams = [body.exam_id]
+            user_obj.level = 3 if success_rate > 70 else 2 if success_rate > 40 else 1
+            user_obj.xp = (user_obj.xp or 0) + 150
+
+        # Also create a UserTestResult
+        test_result = M.UserTestResult(
+            id=str(uuid.uuid4()),
+            user_id=body.user_id,
+            test_id=session_id,
+            exam_id=body.exam_id,
+            test_name=f"{exam.name} Seviye Tespit Sınavı",
+            score=estimated_score,
+            net=net,
+            correct=correct,
+            wrong=wrong,
+            blank=blank,
+            total=total,
+            time_spent=body.time_spent_seconds,
+            section_breakdown=list(subject_stats.values()),
+            created_at=now_str,
+        )
+        db.add(test_result)
+        await db.commit()
+
+    return {
+        "ok": True,
+        "exam_id": body.exam_id,
+        "exam_name": exam.name,
+        "score": estimated_score,
+        "net": net,
+        "total": total,
+        "correct": correct,
+        "wrong": wrong,
+        "blank": blank,
+        "success_rate": success_rate,
+        "level": 3 if success_rate > 70 else 2 if success_rate > 40 else 1,
+        "subjects": list(subject_stats.values()),
+        "weak_topics": weak_topics,
+        "strong_topics": strong_topics,
+        "roadmap": first_week_roadmap,
+    }
+
 
 
 # ============ TERCİH ROBOTU (UNIVERSITY PROGRAMS) ============
@@ -1461,6 +1886,88 @@ async def user_dashboard(user: dict = Depends(current_user), db: AsyncSession = 
         all_t_res = await db.execute(select(M.Test).where(M.Test.status == "published").limit(4))
         recommended_tests = [t.to_dict() for t in all_t_res.scalars().all()]
 
+    # ─── Kişiselleştirilmiş Bugünün Görevleri (Actionable Daily Plan) ───
+    weakest = weak_topics_list[0] if weak_topics_list else {"topic_name": "Temel Kavramlar", "subject_name": "Temel Matematik", "proficiency": 45}
+    second_weakest = weak_topics_list[1] if len(weak_topics_list) > 1 else {"topic_name": "Paragrafta Anlam", "subject_name": "Türkçe", "proficiency": 55}
+
+    today_tasks = [
+        {
+            "id": "task-concept-1",
+            "type": "concept",
+            "title": f"{weakest['topic_name']} Konu Özeti",
+            "subject": weakest['subject_name'],
+            "topic": weakest['topic_name'],
+            "duration_minutes": 15,
+            "completed": False,
+            "action_url": "/app/ders-notlari",
+            "reason": f"Başarı oranın %{weakest['proficiency']} olduğu için öncelikli konu tekrarı önerildi."
+        },
+        {
+            "id": "task-practice-1",
+            "type": "practice",
+            "title": f"15 {weakest['topic_name']} Soru Çözümü",
+            "subject": weakest['subject_name'],
+            "topic": weakest['topic_name'],
+            "duration_minutes": 25,
+            "completed": solved_today >= 10,
+            "action_url": "/app/soru-bankasi",
+            "reason": "Öğrenilen konuyu pekiştirmek için 15 soru çözümü."
+        },
+        {
+            "id": "task-routine-paragraf",
+            "type": "routine",
+            "title": "Günlük 10 Paragraf & Problem Rutini",
+            "subject": "Genel Yetenek",
+            "topic": "Hız & Odaklanma",
+            "duration_minutes": 15,
+            "completed": False,
+            "action_url": "/app/soru-bankasi",
+            "reason": "Sınavda zaman yönetimini ve okuma hızını zirvede tutmak için."
+        },
+        {
+            "id": "task-wrong-review",
+            "type": "mistake_review",
+            "title": "Yanlış Defteri Tekrarı (5 Soru)",
+            "subject": "Karma",
+            "topic": "Hatalı Sorularım",
+            "duration_minutes": 12,
+            "completed": False,
+            "action_url": "/app/eksiklerim",
+            "reason": "Daha önce yanlış yaptığın soru kalıplarını zihnine oturtmak için."
+        },
+        {
+            "id": "task-daily-check",
+            "type": "mini_test",
+            "title": "Günün Kapanış Mini Kontrol Testi",
+            "subject": weakest['subject_name'],
+            "topic": "Günlük Kontrol",
+            "duration_minutes": 10,
+            "completed": False,
+            "action_url": "/app/denemeler",
+            "reason": "Günün verimini ölçmek ve ilerlemeni kaydetmek için."
+        }
+    ]
+
+    # Target exam countdown
+    days_left = 290
+    target_exam_name = "YKS TYT"
+    if target_exams:
+        e_obj_res = await db.execute(select(M.Exam).where(M.Exam.id == target_exams[0]))
+        e_obj = e_obj_res.scalars().first()
+        if e_obj and e_obj.exam_date:
+            try:
+                ed = datetime.fromisoformat(e_obj.exam_date.replace("Z", "+00:00"))
+                days_left = max(0, (ed - now).days)
+                target_exam_name = e_obj.name
+            except Exception:
+                pass
+
+    # AI Coach Tip
+    if weak_topics_list:
+        ai_tip = f"Bugün odak noktamız {weakest['topic_name']} ({weakest['subject_name']}). Bu konuda %{weakest['proficiency']} başarın var. 15 dakikalık konu özetini okuyup 15 soru çözdüğünde bu konudaki netini en az +1.25 artırabilirsin."
+    else:
+        ai_tip = "Harika gidiyorsun! Bugün 10 paragraf sorusu ve 1 branş denemesi çözerek formunu koruyalım."
+
     return {
         "solved_today": solved_today,
         "today_solved": solved_today,
@@ -1478,6 +1985,11 @@ async def user_dashboard(user: dict = Depends(current_user), db: AsyncSession = 
         "weak_topics": weak_topics_list,
         "recent_results": recent_results,
         "recommended_tests": recommended_tests,
+        "today_tasks": today_tasks,
+        "days_until_exam": days_left,
+        "target_exam_name": target_exam_name,
+        "ai_coach_tip": ai_tip,
+        "weekly_completion_pct": min(100, round((solved_today / max(1, user.get("daily_goal", 20) * 5)) * 100)),
     }
 
 
@@ -1486,55 +1998,271 @@ async def user_dashboard(user: dict = Depends(current_user), db: AsyncSession = 
 async def weak_topics(user: dict = Depends(current_user), db: AsyncSession = Depends(get_db)):
     uid = user["id"]
     ans_res = await db.execute(
-        select(M.UserAnswer.topic_id, M.UserAnswer.is_correct)
+        select(M.UserAnswer.topic_id, M.UserAnswer.subject_id, M.UserAnswer.is_correct, M.UserAnswer.is_blank, M.UserAnswer.time_spent, M.UserAnswer.created_at)
         .where(M.UserAnswer.user_id == uid)
     )
     answers = ans_res.all()
     if not answers:
-        return {"critical": [], "improvement": [], "good": []}
+        return {"topics": [], "critical": [], "improvement": [], "good": [], "strong": []}
 
-    topic_stats: Dict[str, Dict[str, int]] = {}
+    topic_answers: Dict[str, List[Dict[str, Any]]] = {}
     for a in answers:
-        if a.topic_id not in topic_stats:
-            topic_stats[a.topic_id] = {"total": 0, "correct": 0}
-        topic_stats[a.topic_id]["total"] += 1
-        if a.is_correct:
-            topic_stats[a.topic_id]["correct"] += 1
+        if a.topic_id not in topic_answers:
+            topic_answers[a.topic_id] = []
+        topic_answers[a.topic_id].append({
+            "is_correct": a.is_correct,
+            "is_blank": a.is_blank,
+            "time_spent": a.time_spent or 60,
+            "created_at": a.created_at,
+            "subject_id": a.subject_id,
+        })
 
-    t_ids = list(topic_stats.keys())
+    t_ids = list(topic_answers.keys())
     t_res = await db.execute(select(M.Topic).where(M.Topic.id.in_(t_ids)))
     topics = {t.id: t for t in t_res.scalars().all()}
+    
+    s_ids = list({t.subject_id for t in topics.values()})
+    subjects = {}
+    if s_ids:
+        s_res = await db.execute(select(M.Subject).where(M.Subject.id.in_(s_ids)))
+        subjects = {s.id: s for s in s_res.scalars().all()}
 
-    critical, improvement, good = [], [], []
-    for tid, st in topic_stats.items():
+    all_prof_list = []
+    critical, improvement, good, strong = [], [], [], []
+
+    for tid, ans_list in topic_answers.items():
         t = topics.get(tid)
-        tname = t.name if t else "Bilinmeyen Konu"
-        rate = round((st["correct"] / st["total"]) * 100, 1)
-        item = {
-            "topic_id": tid,
-            "topic_name": tname,
-            "total": st["total"],
-            "correct": st["correct"],
-            "success_rate": rate,
-        }
-        if rate < 50:
-            critical.append(item)
-        elif rate < 75:
-            improvement.append(item)
+        tname = t.name if t else "Genel Konu"
+        s = subjects.get(t.subject_id) if t else None
+        sname = s.name if s else "Genel"
+        sslug = s.slug if s else "general"
+
+        metric = calculate_topic_proficiency(ans_list, topic_name=tname, subject_name=sname)
+        metric["topic_id"] = tid
+        metric["subject_id"] = t.subject_id if t else None
+        metric["subject_slug"] = sslug
+        all_prof_list.append(metric)
+
+        if metric["proficiency"] < 40:
+            critical.append(metric)
+        elif metric["proficiency"] < 65:
+            improvement.append(metric)
+        elif metric["proficiency"] < 85:
+            good.append(metric)
         else:
-            good.append(item)
+            strong.append(metric)
+
+    all_prof_list.sort(key=lambda x: x["proficiency"])
 
     return {
-        "critical": sorted(critical, key=lambda x: x["success_rate"]),
-        "improvement": sorted(improvement, key=lambda x: x["success_rate"]),
-        "good": sorted(good, key=lambda x: -x["success_rate"]),
+        "topics": all_prof_list,
+        "critical": sorted(critical, key=lambda x: x["proficiency"]),
+        "improvement": sorted(improvement, key=lambda x: x["proficiency"]),
+        "good": sorted(good, key=lambda x: -x["proficiency"]),
+        "strong": sorted(strong, key=lambda x: -x["proficiency"]),
     }
+
+
+# ─── YANLIŞ DEFTERİ (MISTAKE LEDGER & SPACED REPETITION) ────────────────────
+
+class MistakeReasonIn(BaseModel):
+    reason: str
+
+
+class MistakeResolveIn(BaseModel):
+    is_reviewed: bool = True
+
+
+@api.get("/user/mistakes")
+async def get_user_mistakes(
+    exam_id: Optional[str] = None,
+    subject_id: Optional[str] = None,
+    topic_id: Optional[str] = None,
+    reason: Optional[str] = None,
+    is_reviewed: Optional[bool] = None,
+    user: dict = Depends(current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Returns student's wrong answers for smart spaced repetition & review.
+    """
+    uid = user["id"]
+    query = select(M.UserAnswer).where(
+        and_(M.UserAnswer.user_id == uid, M.UserAnswer.is_correct == False)
+    )
+
+    if exam_id:
+        query = query.where(M.UserAnswer.exam_id == exam_id)
+    if subject_id:
+        query = query.where(M.UserAnswer.subject_id == subject_id)
+    if topic_id:
+        query = query.where(M.UserAnswer.topic_id == topic_id)
+    if reason:
+        query = query.where(M.UserAnswer.mistake_reason == reason)
+    if is_reviewed is not None:
+        query = query.where(M.UserAnswer.is_reviewed == is_reviewed)
+
+    query = query.order_by(desc(M.UserAnswer.created_at)).limit(100)
+    ans_res = await db.execute(query)
+    answers = ans_res.scalars().all()
+
+    if not answers:
+        return {"total": 0, "items": []}
+
+    q_ids = [a.question_id for a in answers]
+    q_res = await db.execute(select(M.Question).where(M.Question.id.in_(q_ids)))
+    questions = {q.id: q for q in q_res.scalars().all()}
+
+    t_ids = list({a.topic_id for a in answers})
+    topics = {}
+    if t_ids:
+        t_res = await db.execute(select(M.Topic).where(M.Topic.id.in_(t_ids)))
+        topics = {t.id: t.name for t in t_res.scalars().all()}
+
+    s_ids = list({a.subject_id for a in answers})
+    subjects = {}
+    if s_ids:
+        s_res = await db.execute(select(M.Subject).where(M.Subject.id.in_(s_ids)))
+        subjects = {s.id: s.name for s in s_res.scalars().all()}
+
+    items = []
+    for a in answers:
+        q = questions.get(a.question_id)
+        if not q:
+            continue
+        items.append({
+            "answer_id": a.id,
+            "question_id": a.question_id,
+            "exam_id": a.exam_id,
+            "subject_name": subjects.get(a.subject_id, "Genel"),
+            "topic_name": topics.get(a.topic_id, "Genel Konu"),
+            "selected_answer": a.selected_answer,
+            "correct_answer": a.correct_answer,
+            "is_blank": a.is_blank,
+            "time_spent": a.time_spent,
+            "mistake_reason": a.mistake_reason,
+            "is_reviewed": a.is_reviewed or False,
+            "created_at": a.created_at,
+            "question": q.to_dict(),
+        })
+
+    return {"total": len(items), "items": items}
+
+
+@api.post("/user/mistakes/{answer_id}/reason")
+async def update_mistake_reason(
+    answer_id: str,
+    body: MistakeReasonIn,
+    user: dict = Depends(current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    res = await db.execute(
+        select(M.UserAnswer).where(
+            and_(M.UserAnswer.id == answer_id, M.UserAnswer.user_id == user["id"])
+        )
+    )
+    ans = res.scalars().first()
+    if not ans:
+        raise HTTPException(status_code=404, detail="Yanıt kaydı bulunamadı.")
+
+    ans.mistake_reason = body.reason
+    await db.commit()
+    return {"ok": True, "answer_id": answer_id, "mistake_reason": body.reason}
+
+
+@api.post("/user/mistakes/{answer_id}/resolve")
+async def resolve_mistake(
+    answer_id: str,
+    body: MistakeResolveIn,
+    user: dict = Depends(current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    res = await db.execute(
+        select(M.UserAnswer).where(
+            and_(M.UserAnswer.id == answer_id, M.UserAnswer.user_id == user["id"])
+        )
+    )
+    ans = res.scalars().first()
+    if not ans:
+        raise HTTPException(status_code=404, detail="Yanıt kaydı bulunamadı.")
+
+    ans.is_reviewed = body.is_reviewed
+    ans.reviewed_at = now_iso()
+    
+    # Reward XP for reviewing mistakes
+    u_res = await db.execute(select(M.User).where(M.User.id == user["id"]))
+    u_obj = u_res.scalars().first()
+    if u_obj:
+        u_obj.xp = (u_obj.xp or 0) + 10
+
+    await db.commit()
+    return {"ok": True, "answer_id": answer_id, "is_reviewed": ans.is_reviewed}
+
+
+# ─── QUESTION FEEDBACK & ERROR REPORTING ────────────────────────────────────
+
+class QuestionFeedbackIn(BaseModel):
+    reason: str
+    description: Optional[str] = ""
+
+
+@api.post("/questions/{question_id}/feedback")
+async def report_question_issue(
+    question_id: str,
+    body: QuestionFeedbackIn,
+    user: Optional[dict] = Depends(current_user_optional),
+    db: AsyncSession = Depends(get_db)
+):
+    q_res = await db.execute(select(M.Question).where(M.Question.id == question_id))
+    q = q_res.scalars().first()
+    if not q:
+        raise HTTPException(status_code=404, detail="Soru bulunamadı.")
+
+    fb = M.QuestionFeedback(
+        id=str(uuid.uuid4()),
+        question_id=question_id,
+        user_id=user["id"] if user else None,
+        reason=body.reason,
+        description=body.description or "",
+        status="pending",
+        created_at=now_iso(),
+    )
+    db.add(fb)
+
+    # Auto-flag question if it receives multiple error reports
+    cnt_res = await db.execute(
+        select(func.count(M.QuestionFeedback.id)).where(
+            and_(M.QuestionFeedback.question_id == question_id, M.QuestionFeedback.status == "pending")
+        )
+    )
+    pending_count = cnt_res.scalar() or 0
+    if pending_count >= 3:
+        logger.warning(f"Question {question_id} has {pending_count} pending error reports. Auto-flagging for editor review.")
+
+    await db.commit()
+    return {"ok": True, "message": "Geri bildiriminiz için teşekkürler! İnceleme kuyruğuna alındı."}
+
+
+@api.get("/admin/question-feedbacks")
+async def admin_get_question_feedbacks(
+    status: Optional[str] = "pending",
+    admin: dict = Depends(admin_user),
+    db: AsyncSession = Depends(get_db)
+):
+    query = select(M.QuestionFeedback)
+    if status:
+        query = query.where(M.QuestionFeedback.status == status)
+    query = query.order_by(desc(M.QuestionFeedback.created_at)).limit(50)
+    res = await db.execute(query)
+    feedbacks = res.scalars().all()
+    return [fb.to_dict() for fb in feedbacks]
+
+
 
 
 class NoteActivityIn(BaseModel):
     note_id: str
     seconds_spent: int = 0
-
 
 
 @api.post("/user/note-activity")
@@ -1825,6 +2553,7 @@ async def admin_stats(admin: dict = Depends(admin_user), db: AsyncSession = Depe
     exams_count = (await db.execute(select(func.count()).select_from(M.Exam))).scalar() or 0
     subjects_count = (await db.execute(select(func.count()).select_from(M.Subject))).scalar() or 0
     topics_count = (await db.execute(select(func.count()).select_from(M.Topic))).scalar() or 0
+    subtopics_count = (await db.execute(select(func.count()).select_from(M.Subtopic))).scalar() or 0
     questions_count = (await db.execute(select(func.count()).select_from(M.Question))).scalar() or 0
     tests_count = (await db.execute(select(func.count()).select_from(M.Test))).scalar() or 0
     notes_count = (await db.execute(select(func.count()).select_from(M.StudyNote))).scalar() or 0
@@ -1840,6 +2569,8 @@ async def admin_stats(admin: dict = Depends(admin_user), db: AsyncSession = Depe
         "tests": tests_count,
         "subjects": subjects_count,
         "topics": topics_count,
+        "subtopics": subtopics_count,
+        "total_topics": topics_count + subtopics_count,
         "notes": notes_count,
         "exams": exams_count,
         "answers": answers_count,
@@ -2010,6 +2741,272 @@ async def admin_create_subtopic(body: SubtopicIn, admin: dict = Depends(admin_us
     return subtopic_obj.to_dict()
 
 
+class ExamDiscoverIn(BaseModel):
+    exam_name: str
+    target_year: int = 2026
+    additional_notes: Optional[str] = None
+
+
+@api.post("/admin/exams/ai-discover")
+async def admin_ai_discover_exam(
+    body: ExamDiscoverIn,
+    admin: dict = Depends(admin_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    AI Exam Architect: Discovers 2026 curriculum structure, subject breakdown,
+    topic question weights, and duration rules for any exam in seconds.
+    """
+    await AICoach.key_manager.sync_from_db(db)
+    prompt = f"""Sen Türkiye'nin en üst düzey ÖSYM ve kurum sınavları müfredat & soru dağılımı mimarısın.
+2026 yılı güncel mevzuatına, ÖSYM ve ilgili bakanlık/kurum kılavuzlarına göre '{body.exam_name}' sınavının tüm yapısını çıkaracaksın.
+
+ÖZEL TALİMATLAR / NOTLAR:
+{body.additional_notes or '2026 güncel soru sayıları, süreler ve konu soru dağılımları'}
+
+AŞAĞIDAKİ JSON ŞEMASINA %100 UYGUN TEK BİR JSON NESNESİ (Object) DÖNDÜR:
+{{
+  "name": "{body.exam_name}",
+  "category": "kpss",
+  "exam_type": "general",
+  "description": "2026 güncel sınav yapısı, oturumları ve kimlerin katıldığı hakkında 2-3 cümlelik resmi özet",
+  "total_duration": 130,
+  "seconds_per_question": 65,
+  "total_questions": 120,
+  "wrong_penalty": 0.25,
+  "scoring_type": "Ağırlıklı Standart Puan",
+  "subjects": [
+    {{
+      "name": "Ders Adı (Örn: Genel Yetenek - Türkçe)",
+      "slug": "turkce",
+      "question_count": 30,
+      "seconds_per_question": 60,
+      "topics": [
+        {{
+          "name": "Ana Konu Adı (Örn: Sözcükte Anlam)",
+          "typical_question_count": 3,
+          "importance": "Çok Yüksek",
+          "subtopics": ["Gerçek ve Mecaz Anlam", "Deyimler ve Atasözleri", "Söz Öbekleri"]
+        }}
+      ]
+    }}
+  ]
+}}
+YALNIZCA geçerli JSON nesnesi döndür.
+"""
+    from ai import call_resilient_ai, _clean_json_str
+    raw = await call_resilient_ai(
+        system="Sen profesyonel bir sınav müfredat mimarısın. 2026 ÖSYM ve kurum standartlarına göre hatasız JSON üret.",
+        prompt=prompt,
+        is_json=True
+    )
+    if not raw:
+        raise HTTPException(status_code=500, detail="Yapay zeka sınav mimarisini çıkaramadı.")
+    
+    parsed = _clean_json_str(raw)
+    if isinstance(parsed, list) and len(parsed) > 0:
+        parsed = parsed[0]
+    if isinstance(parsed, dict) and "subjects" not in parsed:
+        for k in ["exam", "sinav", "data", "result", "mufredat", "curriculum"]:
+            if k in parsed and isinstance(parsed[k], dict) and ("subjects" in parsed[k] or "dersler" in parsed[k]):
+                parsed = parsed[k]
+                break
+
+    # Standardize field names if model returned Turkish equivalents
+    if isinstance(parsed, dict):
+        if "dersler" in parsed and "subjects" not in parsed:
+            parsed["subjects"] = parsed.pop("dersler")
+        if "toplam_sure" in parsed and "total_duration" not in parsed:
+            parsed["total_duration"] = parsed.pop("toplam_sure")
+        if "toplam_soru" in parsed and "total_questions" not in parsed:
+            parsed["total_questions"] = parsed.pop("toplam_soru")
+        if "soru_basina_sure" in parsed and "seconds_per_question" not in parsed:
+            parsed["seconds_per_question"] = parsed.pop("soru_basina_sure")
+        if not parsed.get("name"):
+            parsed["name"] = body.exam_name
+
+        # Ensure subjects list items have topics
+        if isinstance(parsed.get("subjects"), list):
+            for s in parsed["subjects"]:
+                if isinstance(s, dict):
+                    if "konular" in s and "topics" not in s:
+                        s["topics"] = s.pop("konular")
+                    if "soru_sayisi" in s and "question_count" not in s:
+                        s["question_count"] = s.pop("soru_sayisi")
+
+    if not isinstance(parsed, dict) or "subjects" not in parsed:
+        raise HTTPException(status_code=500, detail="Yapay zeka geçerli bir sınav müfredat şeması oluşturamadı.")
+    
+    return parsed
+
+
+class ExamProvisionIn(BaseModel):
+    exam_id: Optional[str] = None
+    name: str
+    category: str = "universite"
+    exam_type: str = "general"
+    description: Optional[str] = ""
+    total_duration: int = 120
+    seconds_per_question: int = 75
+    total_questions: int = 100
+    wrong_penalty: float = 0.25
+    scoring_type: str = "Ağırlıklı Puan"
+    subjects: List[Dict[str, Any]]
+
+
+@api.post("/admin/exams/ai-provision")
+async def admin_ai_provision_exam(
+    body: ExamProvisionIn,
+    admin: dict = Depends(admin_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    One-Click Curriculum Provisioner:
+    Atomically writes Exam, Subjects, Topics, Subtopics, and Duration/Scoring configurations to the DB.
+    """
+    exam_id = body.exam_id or str(uuid.uuid4())
+    exam_obj = None
+    if body.exam_id:
+        res = await db.execute(select(M.Exam).where(M.Exam.id == body.exam_id))
+        exam_obj = res.scalars().first()
+    
+    scoring_config = {
+        "total_duration": body.total_duration,
+        "seconds_per_question": body.seconds_per_question,
+        "total_questions": body.total_questions,
+        "wrong_penalty": body.wrong_penalty,
+        "score_type": body.scoring_type or "Ağırlıklı Puan",
+        "sections": [
+            {
+                "name": s.get("name"),
+                "question_count": s.get("question_count", 0),
+                "seconds_per_question": s.get("seconds_per_question", body.seconds_per_question)
+            }
+            for s in body.subjects
+        ]
+    }
+
+    if exam_obj:
+        exam_obj.name = body.name
+        exam_obj.category = body.category
+        exam_obj.description = body.description or ""
+        exam_obj.scoring_config = scoring_config
+    else:
+        exam_obj = M.Exam(
+            id=exam_id,
+            name=body.name,
+            category=body.category,
+            exam_type=body.exam_type or "general",
+            description=body.description or "",
+            status="active",
+            scoring_config=scoring_config,
+            created_at=now_iso(),
+        )
+        db.add(exam_obj)
+    
+    subjects_created = 0
+    topics_created = 0
+    subtopics_created = 0
+
+    for s_idx, s_data in enumerate(body.subjects):
+        subj_name = s_data.get("name", "").strip()
+        if not subj_name:
+            continue
+        subj_id = str(uuid.uuid4())
+        subj_obj = M.Subject(
+            id=subj_id,
+            exam_id=exam_id,
+            name=subj_name,
+            slug=s_data.get("slug") or "general",
+            order=s_idx + 1,
+            status="active",
+            created_at=now_iso()
+        )
+        db.add(subj_obj)
+        subjects_created += 1
+
+        for t_idx, t_data in enumerate(s_data.get("topics", [])):
+            t_name = t_data.get("name", "").strip() if isinstance(t_data, dict) else str(t_data).strip()
+            if not t_name:
+                continue
+            topic_id = str(uuid.uuid4())
+            topic_obj = M.Topic(
+                id=topic_id,
+                exam_id=exam_id,
+                subject_id=subj_id,
+                name=t_name,
+                order=t_idx + 1,
+                status="active",
+                created_at=now_iso()
+            )
+            db.add(topic_obj)
+            topics_created += 1
+
+            subtopics_list = t_data.get("subtopics", []) if isinstance(t_data, dict) else []
+            for st_idx, st_item in enumerate(subtopics_list):
+                st_name = str(st_item).strip()
+                if not st_name:
+                    continue
+                subtopic_obj = M.Subtopic(
+                    id=str(uuid.uuid4()),
+                    topic_id=topic_id,
+                    name=st_name,
+                    order=st_idx + 1,
+                    created_at=now_iso()
+                )
+                db.add(subtopic_obj)
+                subtopics_created += 1
+
+    await db.commit()
+    return {
+        "ok": True,
+        "exam_id": exam_id,
+        "name": body.name,
+        "subjects_created": subjects_created,
+        "topics_created": topics_created,
+        "subtopics_created": subtopics_created,
+    }
+
+
+@api.get("/admin/exams/distribution-audit")
+async def admin_exams_distribution_audit(
+    admin: dict = Depends(admin_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Curriculum & Time Distribution Audit:
+    Audits all system exams for question counts, durations, subject distribution, and accuracy.
+    """
+    exams = (await db.execute(select(M.Exam).order_by(M.Exam.name))).scalars().all()
+    audit_results = []
+
+    for ex in exams:
+        subj_res = await db.execute(select(M.Subject).where(M.Subject.exam_id == ex.id))
+        subjects = subj_res.scalars().all()
+
+        topic_res = await db.execute(select(M.Topic).where(M.Topic.exam_id == ex.id))
+        topics = topic_res.scalars().all()
+
+        total_questions = (await db.execute(select(func.count(M.Question.id)).where(M.Question.exam_id == ex.id))).scalar() or 0
+
+        score_cfg = ex.scoring_config or {}
+        audit_results.append({
+            "exam_id": ex.id,
+            "name": ex.name,
+            "category": ex.category,
+            "subjects_count": len(subjects),
+            "topics_count": len(topics),
+            "total_questions_in_bank": total_questions,
+            "total_duration": score_cfg.get("total_duration") or "Belirtilmemiş",
+            "seconds_per_question": score_cfg.get("seconds_per_question") or "Belirtilmemiş",
+            "total_exam_questions": score_cfg.get("total_questions") or "Belirtilmemiş",
+            "sections": score_cfg.get("sections", []),
+            "has_scoring_configured": bool(score_cfg.get("sections")),
+        })
+
+    return {"audit": audit_results}
+
+
 # ─── CURRICULUM CRUD OPERATIONS (UPDATE & DELETE) ───────────────────────────
 
 @api.put("/admin/exams/{exam_id}")
@@ -2148,6 +3145,7 @@ async def admin_list_questions(
     exam_id: Optional[str] = None,
     subject_id: Optional[str] = None,
     topic_id: Optional[str] = None,
+    subtopic_id: Optional[str] = None,
     search: Optional[str] = None,
     difficulty: Optional[str] = None,
     year: Optional[int] = None,
@@ -2168,6 +3166,9 @@ async def admin_list_questions(
     if topic_id:
         stmt = stmt.where(M.Question.topic_id == topic_id)
         count_stmt = count_stmt.where(M.Question.topic_id == topic_id)
+    if subtopic_id:
+        stmt = stmt.where(M.Question.subtopic_id == subtopic_id)
+        count_stmt = count_stmt.where(M.Question.subtopic_id == subtopic_id)
     if difficulty:
         stmt = stmt.where(M.Question.difficulty == difficulty)
         count_stmt = count_stmt.where(M.Question.difficulty == difficulty)
@@ -2642,6 +3643,48 @@ class NoteIn(BaseModel):
     file_name: Optional[str] = None
 
 
+@api.get("/admin/notes")
+async def admin_list_notes(
+    exam_id: Optional[str] = None,
+    subject_id: Optional[str] = None,
+    topic_id: Optional[str] = None,
+    search: Optional[str] = None,
+    page: int = 1,
+    page_size: int = 20,
+    admin: dict = Depends(admin_user),
+    db: AsyncSession = Depends(get_db),
+):
+    stmt = select(M.StudyNote)
+    count_stmt = select(func.count()).select_from(M.StudyNote)
+
+    if exam_id:
+        stmt = stmt.where(M.StudyNote.exam_id == exam_id)
+        count_stmt = count_stmt.where(M.StudyNote.exam_id == exam_id)
+    if subject_id:
+        stmt = stmt.where(M.StudyNote.subject_id == subject_id)
+        count_stmt = count_stmt.where(M.StudyNote.subject_id == subject_id)
+    if topic_id:
+        stmt = stmt.where(M.StudyNote.topic_id == topic_id)
+        count_stmt = count_stmt.where(M.StudyNote.topic_id == topic_id)
+    if search:
+        s_pat = f"%{search}%"
+        stmt = stmt.where(or_(M.StudyNote.title.ilike(s_pat), M.StudyNote.description.ilike(s_pat), M.StudyNote.content.ilike(s_pat)))
+        count_stmt = count_stmt.where(or_(M.StudyNote.title.ilike(s_pat), M.StudyNote.description.ilike(s_pat), M.StudyNote.content.ilike(s_pat)))
+
+    total = (await db.execute(count_stmt)).scalar() or 0
+    offset = max(0, (page - 1) * page_size)
+    stmt = stmt.order_by(desc(M.StudyNote.created_at)).offset(offset).limit(page_size)
+    res = await db.execute(stmt)
+    notes = [n.to_dict() for n in res.scalars().all()]
+
+    return {
+        "items": notes,
+        "total": total,
+        "page": page,
+        "page_size": page_size,
+    }
+
+
 @api.post("/admin/notes")
 async def admin_create_note(body: NoteIn, admin: dict = Depends(admin_user), db: AsyncSession = Depends(get_db)):
     note_obj = M.StudyNote(
@@ -2662,6 +3705,149 @@ async def admin_create_note(body: NoteIn, admin: dict = Depends(admin_user), db:
     db.add(note_obj)
     await db.commit()
     return note_obj.to_dict()
+
+
+@api.put("/admin/notes/{note_id}")
+async def admin_update_note(note_id: str, body: NoteIn, admin: dict = Depends(admin_user), db: AsyncSession = Depends(get_db)):
+    res = await db.execute(select(M.StudyNote).where(M.StudyNote.id == note_id))
+    note_obj = res.scalars().first()
+    if not note_obj:
+        raise HTTPException(status_code=404, detail="Ders notu bulunamadı")
+
+    note_obj.title = body.title
+    note_obj.description = body.description
+    note_obj.exam_id = body.exam_id
+    note_obj.subject_id = body.subject_id
+    note_obj.topic_id = body.topic_id
+    note_obj.content = body.content
+    note_obj.video_url = body.video_url
+    if body.file_path is not None:
+        note_obj.file_path = body.file_path
+    if body.file_name is not None:
+        note_obj.file_name = body.file_name
+    note_obj.updated_at = now_iso()
+
+    await db.commit()
+    return note_obj.to_dict()
+
+
+@api.delete("/admin/notes/{note_id}")
+async def admin_delete_note(note_id: str, admin: dict = Depends(admin_user), db: AsyncSession = Depends(get_db)):
+    res = await db.execute(select(M.StudyNote).where(M.StudyNote.id == note_id))
+    note_obj = res.scalars().first()
+    if not note_obj:
+        raise HTTPException(status_code=404, detail="Ders notu bulunamadı")
+    await db.delete(note_obj)
+    await db.commit()
+    return {"ok": True}
+
+
+class NoteAIGenIn(BaseModel):
+    exam_id: str
+    subject_id: str
+    topic_id: str
+    subtopic_id: Optional[str] = None
+    style: str = "mala_anlatir_gibi"  # "mala_anlatir_gibi", "detayli_akademik", "pratik_puf_noktalari", "soru_odakli"
+    custom_instructions: Optional[str] = None
+
+
+@api.post("/admin/notes/ai-generate")
+async def admin_ai_generate_note(
+    body: NoteAIGenIn,
+    admin: dict = Depends(admin_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Özel İstemle 'Mala Anlatır Gibi' Zengin Şemalı Konu Anlatımı Üretici
+    """
+    await AICoach.key_manager.sync_from_db(db)
+    exam = (await db.execute(select(M.Exam).where(M.Exam.id == body.exam_id))).scalars().first()
+    subject = (await db.execute(select(M.Subject).where(M.Subject.id == body.subject_id))).scalars().first()
+    topic = (await db.execute(select(M.Topic).where(M.Topic.id == body.topic_id))).scalars().first()
+    
+    if not exam or not subject or not topic:
+        raise HTTPException(status_code=404, detail="Sınav, ders veya konu bulunamadı.")
+        
+    subtopic_name = ""
+    if body.subtopic_id:
+        subt = (await db.execute(select(M.Subtopic).where(M.Subtopic.id == body.subtopic_id))).scalars().first()
+        if subt:
+            subtopic_name = f" > {subt.name}"
+
+    style_guide = "MALA ANLATIR GİBİ (EN BASİT, EN SOMUT ANALOJİLERLE, SIFIR ÖN BİLGİ VARSAYARAK, MANTIĞINI KAVRATACAK ŞEKİLDE)"
+    if body.style == "detayli_akademik":
+        style_guide = "DETAYLI & KAPSAMLI AKADEMİK VE İSPAT ODAKLI"
+    elif body.style == "pratik_puf_noktalari":
+        style_guide = "PRATİK PÜF NOKTALARI, KISAYOLLAR VE TUZAKLAR ODAKLI"
+    elif body.style == "soru_odakli":
+        style_guide = "BOL ÇÖZÜMLÜ ÖRNEK VE YENİ NESİL SORU ANALİZİ ODAKLI"
+
+    prompt = f"""Sen Türkiye'nin en başarılı, pedagojik olarak en usta ve öğrencilerin sevgilisi olan {exam.name} baş eğitmenisin.
+Hedef: {exam.name} sınavına hazırlanan bir öğrenci için {subject.name} dersinin '{topic.name}{subtopic_name}' konusunu {style_guide} üslupla sıfırdan zirveye eksiksiz bir ders anlatım rehberi olarak yazacaksın.
+
+ÖZEL KULLANICI TALİMATLARI:
+{body.custom_instructions or 'Görsel çizimler, şemalar, ASCII tablolar, renkli uyarı kutuları, günlük hayattan somut analojiler ve çözümlü kolay/orta/zor sorular ekle.'}
+
+DÖKÜMANI ŞU ZENGİN VE EKSİKSİZ MARKDOWN FORMATINDA OLUŞTUR:
+
+# 🌟 {topic.name}{subtopic_name} — Sıfırdan Zirveye Konu Anlatımı
+
+## 📌 1. Bu Konu Nedir ve Günlük Hayatta Ne İşe Yarar?
+- Konuyu en temel, somut bir günlük hayat analojisiyle açıkla (Öğrencinin kafasındaki 'Neden öğreniyorum?' sorusunu tamamen çöz).
+- {exam.name} sınavında bu konudan ortalama kaç soru çıktığını ve önemini belirt.
+
+## 🧠 2. Temel Kavramlar & Mantığın Özü (Ezber Yok, Mantık Var!)
+- Sıfırdan tüm terimleri, tanımları tek tek açıkla.
+- Kuralların ve formüllerin neden öyle olduğunu mantığıyla göster (İspatını/mantığını anlat).
+- Şemalar, ASCII kutucuklar veya net maddeler kullan (Unicode semboller: ², ³, √, π, ≤, ≥, ±, ≠).
+
+## ⚠️ 3. ÖSYM'nin En Sevdiği Tuzaklar & Çeldiriciler
+- Öğrencilerin bu konuda sınavda en sık düştüğü 3 büyük hata.
+- Soru köklerindeki gizli kelimeler ('kesinlikle', 'olabilir', 'en az', 'daima' vb.).
+- Zaman kazandıran altın pratik taktikler ve kısayollar.
+
+## 📝 4. Adım Adım Seviye Seviye Çözümlü Örnekler
+### 🟢 Seviye 1: Isınma & Temel Soru (Kolay)
+- **Soru:** ...
+- **Çözüm:** (Adım adım 1., 2., 3. adım)
+
+### 🟡 Seviye 2: Kavrama & Standart Sınav Sorusu (Orta)
+- **Soru:** ...
+- **Çözüm:** (Mantık yürütme aşamaları ve çözüm)
+
+### 🔴 Seviye 3: Yeni Nesil / Beceri Temelli ÖSYM Sorusu (Zor & Düşündürücü)
+- **Soru:** (Hikayeli, şekilli/mantık yürütmeli yeni nesil soru)
+- **Çözüm:** (Soruyu parçalama ve hatasız sonuca ulaşma rehberi)
+
+## 📊 5. Konu Özeti & Hafıza Kartı (Son Tekrar Tablosu)
+- Konunun tüm can alıcı formüllerini ve kurallarını içeren 1 dakikalık özet tablo/liste.
+
+## 🚀 6. Sırada Ne Var?
+- Bu konuyu bitiren öğrencinin hemen peşinden çözmesi gereken test miktarı ve sonraki konu.
+"""
+
+    from ai import call_resilient_ai
+    content = await call_resilient_ai(
+        system="Sen profesyonel bir eğitim içerik uzmanısın. Zengin Markdown formatında, öğrenci dostu, samimi ve kaliteli konu anlatımı üret.",
+        prompt=prompt,
+        is_json=False
+    )
+
+    if not content:
+        raise HTTPException(status_code=500, detail="Yapay zeka konu anlatımı üretemedi. Lütfen API anahtarlarınızı kontrol edin.")
+
+    title = f"{topic.name}{subtopic_name} Konu Anlatımı"
+    description = f"{exam.name} {subject.name} dersi {topic.name}{subtopic_name} konusu için sıfırdan zirveye kapsamlı konu anlatım rehberi."
+
+    return {
+        "ok": True,
+        "exam_id": body.exam_id,
+        "subject_id": body.subject_id,
+        "topic_id": body.topic_id,
+        "title": title,
+        "description": description,
+        "content": content
+    }
 
 
 @api.put("/admin/exams/{exam_id}/scoring")
@@ -2854,19 +4040,7 @@ async def create_api_key(body: ApiKeyIn, admin: dict = Depends(admin_user), db: 
     )
     db.add(key_obj)
     await db.commit()
-    # Reload ai key manager with new DB keys
-    try:
-        from ai import key_manager
-        import os
-        # Append new key to in-memory pool
-        from ai import KeyEntry
-        entry = KeyEntry(body.key_value, body.provider)
-        if body.provider not in key_manager.pools:
-            key_manager.pools[body.provider] = []
-        key_manager.pools[body.provider].append(entry)
-        logger.info(f"Runtime: Added API key [{body.provider} - {_mask_key(body.key_value)}] to key manager")
-    except Exception as e:
-        logger.warning(f"Could not hot-reload key manager: {e}")
+    await AICoach.key_manager.sync_from_db(db)
     return key_obj.to_dict()
 
 @api.patch("/admin/api-keys/{key_id}")
@@ -2882,6 +4056,7 @@ async def patch_api_key(key_id: str, body: ApiKeyPatch, admin: dict = Depends(ad
     if body.name is not None:
         k.name = body.name
     await db.commit()
+    await AICoach.key_manager.sync_from_db(db)
     return k.to_dict()
 
 @api.delete("/admin/api-keys/{key_id}")
@@ -2892,6 +4067,7 @@ async def delete_api_key(key_id: str, admin: dict = Depends(admin_user), db: Asy
         raise HTTPException(status_code=404, detail="Anahtar bulunamadı")
     await db.delete(k)
     await db.commit()
+    await AICoach.key_manager.sync_from_db(db)
     return {"ok": True}
 
 @api.get("/admin/api-keys/status")
@@ -2900,145 +4076,333 @@ async def api_key_live_status(admin: dict = Depends(admin_user)):
     from ai import key_manager
     return key_manager.get_status_summary()
 
+@api.post("/admin/api-keys/{key_id}/test")
+async def test_api_key(key_id: str, admin: dict = Depends(admin_user), db: AsyncSession = Depends(get_db)):
+    """API anahtarının canlı bağlantısını test eder ve yanıt durumunu bildirir."""
+    import time
+    import httpx
+    res = await db.execute(select(M.ApiKey).where(M.ApiKey.id == key_id))
+    k = res.scalars().first()
+    if not k:
+        raise HTTPException(status_code=404, detail="Anahtar bulunamadı")
 
-# ─── Admin: Toplu Soru Üretimi ────────────────────────────────────────────────
-_question_gen_task: asyncio.Task = None
-_question_gen_status = {"running": False, "done": 0, "failed": 0, "total": 0, "started_at": None, "log": []}
+    t0 = time.time()
+    prov = (k.provider or "gemini").lower()
+    
+    if prov == "gemini":
+        default_model = os.environ.get("GEMINI_MODEL", "gemini-3.6-flash")
+        models_to_test = [default_model, "gemini-2.0-flash", "gemini-1.5-flash"]
+        for m in models_to_test:
+            try:
+                url = f"https://generativelanguage.googleapis.com/v1beta/models/{m}:generateContent?key={k.key_value}"
+                payload = {"contents": [{"parts": [{"text": "1+1 kaç eder? Sadece tek bir sayı ile yanıt ver."}]}]}
+                async with httpx.AsyncClient(timeout=15) as client:
+                    r = await client.post(url, json=payload)
+                    latency = round((time.time() - t0) * 1000)
+                    if r.status_code == 200:
+                        data = r.json()
+                        ans = data.get("candidates", [{}])[0].get("content", {}).get("parts", [{}])[0].get("text", "").strip()
+                        return {"ok": True, "provider": prov, "model": m, "latency_ms": latency, "message": f"Bağlantı Başarılı! ({latency}ms) - Model: {m} - Yanıt: {ans}"}
+                    elif r.status_code == 429:
+                        return {"ok": False, "provider": prov, "model": m, "latency_ms": latency, "error": "Kota Doldu (429 Rate Limit) - Gemini dakikalık veya günlük istek limiti aşıldı."}
+            except Exception as e:
+                continue
+        return {"ok": False, "provider": prov, "error": "Gemini API yanıt vermedi veya anahtar geçersiz."}
+    
+    elif prov in ["groq", "openai", "deepseek", "openrouter", "mistral"]:
+        base_urls = {
+            "groq": "https://api.groq.com/openai/v1",
+            "deepseek": "https://api.deepseek.com/v1",
+            "openrouter": "https://openrouter.ai/api/v1",
+        }
+        models_by_prov = {
+            "groq": ["qwen/qwen3.6-27b", "openai/gpt-oss-120b"],
+            "openai": ["gpt-4o-mini", "gpt-4o"],
+            "deepseek": ["deepseek-chat"],
+            "openrouter": ["google/gemini-3.6-flash"],
+        }
+        from openai import AsyncOpenAI
+        models_to_test = models_by_prov.get(prov, ["gpt-4o-mini"])
+        client = AsyncOpenAI(api_key=k.key_value, base_url=base_urls.get(prov))
+        for m in models_to_test:
+            try:
+                resp = await client.chat.completions.create(
+                    model=m,
+                    messages=[{"role": "user", "content": "1+1 kaç eder? Sadece sayı ver."}],
+                    max_tokens=10,
+                    timeout=15
+                )
+                latency = round((time.time() - t0) * 1000)
+                msg_obj = resp.choices[0].message
+                content = msg_obj.content or ""
+                if hasattr(msg_obj, "reasoning") and msg_obj.reasoning:
+                    content = msg_obj.reasoning + "\n" + content
+                ans = content.strip()
+                return {"ok": True, "provider": prov, "model": m, "latency_ms": latency, "message": f"Bağlantı Başarılı! ({latency}ms) - Model: {m} - Yanıt: {ans[:30]}"}
+            except Exception as e:
+                err_str = str(e).lower()
+                if "429" in err_str or "rate limit" in err_str:
+                    return {"ok": False, "provider": prov, "model": m, "error": f"Kota Doldu (429 Rate Limit) - {prov.upper()} istek limiti aşıldı."}
+                if "401" in err_str or "invalid" in err_str:
+                    return {"ok": False, "provider": prov, "model": m, "error": "Geçersiz API Anahtarı (401 Unauthorized)"}
+                continue
+        return {"ok": False, "provider": prov, "error": f"{prov.upper()} sağlayıcısına bağlanılamadı."}
+
+    return {"ok": True, "provider": prov, "message": "Anahtar kaydedildi."}
+
+
+@api.post("/admin/api-keys/audit")
+async def audit_all_api_keys(admin: dict = Depends(admin_user), db: AsyncSession = Depends(get_db)):
+    """Comprehensive health and capability inspection of all active API keys."""
+    from ai import audit_single_api_key
+    res = await db.execute(select(M.ApiKey).where(M.ApiKey.is_active == True))
+    keys = res.scalars().all()
+    
+    audit_results = []
+    for k in keys:
+        audit = await audit_single_api_key(k.provider, k.key_value, key_id=k.id)
+        audit_results.append(audit)
+        
+    return {
+        "ok": True,
+        "total_tested": len(keys),
+        "results": audit_results
+    }
+
+
+@api.post("/admin/api-keys/{key_id}/audit")
+async def audit_api_key_by_id(key_id: str, admin: dict = Depends(admin_user), db: AsyncSession = Depends(get_db)):
+    """Comprehensive health and capability inspection of a single API key."""
+    from ai import audit_single_api_key
+    k = await db.get(M.ApiKey, key_id)
+    if not k:
+        raise HTTPException(status_code=404, detail="API anahtarı bulunamadı.")
+        
+    audit = await audit_single_api_key(k.provider, k.key_value, key_id=k.id)
+    return {
+        "ok": audit.get("is_healthy", False),
+        "result": audit
+    }
+
+
+# ─── Admin: Toplu Soru Üretimi (Job Queue) ────────────────────────────────────────────────
 
 class QuestionBulkGenIn(BaseModel):
     exam_id: Optional[str] = None
     count_per_subtopic: int = 5
     difficulty: str = "orta"
     style: str = "standard"
-
-async def _run_bulk_question_generation(exam_id: Optional[str], count_per_subtopic: int, difficulty: str, style: str):
-    global _question_gen_status
-    _question_gen_status["running"] = True
-    _question_gen_status["started_at"] = now_iso()
-    _question_gen_status["log"] = ["🚀 Toplu soru üretimi başladı..."]
-    _question_gen_status["done"] = 0
-    _question_gen_status["failed"] = 0
-    _question_gen_status["total"] = 0
-
-    try:
-        async with AsyncSessionLocal() as session:
-            stmt = select(M.Subtopic, M.Topic, M.Subject, M.Exam).join(
-                M.Topic, M.Subtopic.topic_id == M.Topic.id
-            ).join(
-                M.Subject, M.Topic.subject_id == M.Subject.id
-            ).join(
-                M.Exam, M.Subject.exam_id == M.Exam.id
-            )
-            if exam_id:
-                stmt = stmt.where(M.Exam.id == exam_id)
-            
-            res = await session.execute(stmt)
-            rows = res.all()
-            
-            _question_gen_status["total"] = len(rows)
-            _question_gen_status["log"].append(f"🔍 Toplam {len(rows)} alt konu bulundu. Soru üretimi başlatılıyor...")
-            
-            for idx, (subt, topic, subj, exam_obj) in enumerate(rows):
-                if not _question_gen_status["running"]:
-                    _question_gen_status["log"].append("⛔ Üretim durduruldu.")
-                    break
-                
-                _question_gen_status["log"].append(
-                    f"⏳ ({idx+1}/{len(rows)}) {exam_obj.name} -> {subj.name} -> {topic.name} -> {subt.name}..."
-                )
-                
-                # Fetch samples
-                sample_res = await session.execute(
-                    select(M.Question.question_text)
-                    .where(M.Question.subtopic_id == subt.id)
-                    .limit(5)
-                )
-                existing_samples = sample_res.scalars().all()
-                
-                try:
-                    questions = await AICoach.generate_custom_questions_ai(
-                        exam_name=exam_obj.name,
-                        subject_name=subj.name,
-                        topic_name=topic.name,
-                        subtopic_name=subt.name,
-                        count=count_per_subtopic,
-                        difficulty=difficulty,
-                        style=style,
-                        existing_samples=existing_samples
-                    )
-                    
-                    for q_data in questions:
-                        q_obj = M.Question(
-                            id=str(uuid.uuid4()),
-                            exam_id=exam_obj.id,
-                            subject_id=subj.id,
-                            topic_id=topic.id,
-                            subtopic_id=subt.id,
-                            question_text=q_data.get("question_text", "Soru"),
-                            option_a=q_data.get("option_a", ""),
-                            option_b=q_data.get("option_b", ""),
-                            option_c=q_data.get("option_c", ""),
-                            option_d=q_data.get("option_d", ""),
-                            option_e=q_data.get("option_e", ""),
-                            correct_answer=q_data.get("correct_answer", "A"),
-                            difficulty=q_data.get("difficulty", difficulty),
-                            explanation=q_data.get("explanation", ""),
-                            status="published",
-                            created_at=now_iso(),
-                        )
-                        session.add(q_obj)
-                    
-                    await session.commit()
-                    _question_gen_status["done"] += 1
-                    _question_gen_status["log"].append(f"✅ Başarılı: {subt.name} için {len(questions)} soru eklendi.")
-                except Exception as e:
-                    _question_gen_status["failed"] += 1
-                    _question_gen_status["log"].append(f"❌ Hata: {subt.name} ({e})")
-                    logger.error(f"Error generating questions for subtopic {subt.id}: {e}")
-                
-                await asyncio.sleep(0.5)
-
-            _question_gen_status["log"].append("🎉 Toplu soru üretimi tamamlandı.")
-    except Exception as e:
-        _question_gen_status["log"].append(f"❌ Kritik hata: {e}")
-        logger.error(f"Bulk question generation critical error: {e}")
-    finally:
-        _question_gen_status["running"] = False
+    delay_seconds: int = 60
+    only_missing: bool = True  # Yalnızca henüz sorusu üretilmemiş eksik konuları ekle
 
 @api.post("/admin/generate-questions")
-async def start_question_generation(body: QuestionBulkGenIn, admin: dict = Depends(admin_user)):
-    global _question_gen_task, _question_gen_status
-    if _question_gen_status.get("running"):
-        return {"ok": False, "message": "Toplu soru üretimi zaten devam ediyor.", "status": _question_gen_status}
-    
-    _question_gen_status = {
-        "running": True, "done": 0, "failed": 0, "total": 0,
-        "started_at": now_iso(), "log": ["🚀 Başlatılıyor..."],
-    }
-    
-    _question_gen_task = asyncio.create_task(
-        _run_bulk_question_generation(
-            exam_id=body.exam_id,
-            count_per_subtopic=body.count_per_subtopic,
-            difficulty=body.difficulty,
-            style=body.style,
+async def start_question_generation(body: QuestionBulkGenIn, admin: dict = Depends(admin_user), db: AsyncSession = Depends(get_db)):
+    # 1. Daha önce tamamlanmış veya sorusu olan konuları tespit et (only_missing aktifse)
+    existing_completed = set()
+    if body.only_missing:
+        done_jobs = await db.execute(
+            select(M.AIGenerationJob.exam_id, M.AIGenerationJob.topic_id, M.AIGenerationJob.subtopic_id)
+            .where(M.AIGenerationJob.status == "completed")
         )
+        for e_id, t_id, s_id in done_jobs.all():
+            existing_completed.add((e_id, t_id, s_id))
+            
+        q_rows = await db.execute(
+            select(M.Question.exam_id, M.Question.topic_id, M.Question.subtopic_id)
+            .group_by(M.Question.exam_id, M.Question.topic_id, M.Question.subtopic_id)
+        )
+        for e_id, t_id, s_id in q_rows.all():
+            existing_completed.add((e_id, t_id, s_id))
+            # Also register without subtopic if topic has direct questions
+            existing_completed.add((e_id, t_id, None))
+
+    # 2. Bütün dersleri, ana konuları ve sınavları çek
+    stmt = select(M.Topic, M.Subject, M.Exam).join(
+        M.Subject, M.Topic.subject_id == M.Subject.id
+    ).join(
+        M.Exam, M.Subject.exam_id == M.Exam.id
     )
-    return {"ok": True, "status": _question_gen_status}
+    if body.exam_id:
+        stmt = stmt.where(M.Exam.id == body.exam_id)
+    
+    topic_rows = (await db.execute(stmt)).all()
+    
+    if not topic_rows:
+        return {"ok": False, "message": "Seçili sınava ait hiçbir konu bulunamadı."}
+        
+    created_count = 0
+    skipped_count = 0
+    now_str = now_iso()
+    
+    for topic, subj, exam_obj in topic_rows:
+        # Konuya ait alt başlıkları bul
+        sub_res = await db.execute(
+            select(M.Subtopic)
+            .where(M.Subtopic.topic_id == topic.id)
+            .order_by(M.Subtopic.order.asc())
+        )
+        subtopics = sub_res.scalars().all()
+        
+        if subtopics:
+            # Alt konular mevcutsa her bir alt konu için ayrı görev aç
+            for subt in subtopics:
+                if body.only_missing and (exam_obj.id, topic.id, subt.id) in existing_completed:
+                    skipped_count += 1
+                    continue
+
+                job = M.AIGenerationJob(
+                    id=str(uuid.uuid4()),
+                    status="pending",
+                    exam_id=exam_obj.id,
+                    exam_name=exam_obj.name,
+                    subject_id=subj.id,
+                    subject_name=subj.name,
+                    topic_id=topic.id,
+                    topic_name=topic.name,
+                    subtopic_id=subt.id,
+                    subtopic_name=subt.name,
+                    target_count=body.count_per_subtopic,
+                    difficulty=body.difficulty,
+                    style=body.style,
+                    attempt_count=0,
+                    max_retries=config.MAX_RETRIES,
+                    created_at=now_str
+                )
+                db.add(job)
+                created_count += 1
+        else:
+            # Alt konu yoksa ana konunun kendisini üretim birimi yap (Hiçbir konu atlanmaz!)
+            if body.only_missing and (exam_obj.id, topic.id, None) in existing_completed:
+                skipped_count += 1
+                continue
+
+            job = M.AIGenerationJob(
+                id=str(uuid.uuid4()),
+                status="pending",
+                exam_id=exam_obj.id,
+                exam_name=exam_obj.name,
+                subject_id=subj.id,
+                subject_name=subj.name,
+                topic_id=topic.id,
+                topic_name=topic.name,
+                subtopic_id=None,
+                subtopic_name=topic.name,
+                target_count=body.count_per_subtopic,
+                difficulty=body.difficulty,
+                style=body.style,
+                attempt_count=0,
+                max_retries=config.MAX_RETRIES,
+                created_at=now_str
+            )
+            db.add(job)
+            created_count += 1
+        
+    await db.commit()
+    
+    msg = f"Kuyruğa başarıyla eklendi. Toplam {created_count} eksik konu arka planda sırayla işlenecek."
+    if skipped_count > 0:
+        msg += f" (Daha önce üretilmiş {skipped_count} konu akıllıca atlandı)."
+
+    return {
+        "ok": True, 
+        "message": msg,
+        "jobs_added": created_count,
+        "jobs_skipped": skipped_count
+    }
 
 @api.get("/admin/generate-questions/status")
-async def question_generation_status(admin: dict = Depends(admin_user)):
-    return _question_gen_status
+async def question_generation_status(admin: dict = Depends(admin_user), db: AsyncSession = Depends(get_db)):
+    # DB'den anlık Queue durumunu çek
+    status_counts = await db.execute(
+        select(M.AIGenerationJob.status, func.count(M.AIGenerationJob.id))
+        .group_by(M.AIGenerationJob.status)
+    )
+    
+    counts = {row[0]: row[1] for row in status_counts.all()}
+    
+    # Recent logs/jobs (Son tamamlanan ve işlenen en güncel kayıtlar en üstte)
+    recent = await db.execute(
+        select(M.AIGenerationJob)
+        .where(M.AIGenerationJob.status != "cancelled")
+        .order_by(
+            M.AIGenerationJob.completed_at.desc(),
+            M.AIGenerationJob.started_at.desc(),
+            M.AIGenerationJob.created_at.desc()
+        )
+        .limit(30)
+    )
+    jobs = recent.scalars().all()
+    recent_jobs = [j.to_dict() for j in jobs]
+    
+    logs = []
+    tr_tz = timezone(timedelta(hours=3))
+    for j in jobs:
+        time_raw = j.completed_at or j.started_at or j.created_at or ""
+        time_str = ""
+        if time_raw:
+            try:
+                clean_iso = time_raw.replace("Z", "+00:00")
+                dt = datetime.fromisoformat(clean_iso)
+                time_str = dt.astimezone(tr_tz).strftime("%H:%M:%S")
+            except Exception:
+                time_str = time_raw[11:19]
+
+        prefix = f"[{time_str}]" if time_str else ""
+        if j.status == "completed":
+            logs.append(f"{prefix} ✅ {j.exam_name or ''} > {j.subject_name or ''} > {j.subtopic_name or ''}: {j.target_count} soru üretildi ({j.response_time or 0}s)")
+        elif j.status == "processing":
+            logs.append(f"{prefix} ⏳ {j.exam_name or ''} > {j.subject_name or ''} > {j.subtopic_name or ''}: Yapay zeka ile üretiliyor...")
+        elif j.status == "failed":
+            logs.append(f"{prefix} ❌ {j.exam_name or ''} > {j.subject_name or ''} > {j.subtopic_name or ''}: Hata ({j.error_message or 'Bilinmeyen hata'})")
+        elif j.status == "pending":
+            logs.append(f"{prefix} 📋 {j.exam_name or ''} > {j.subject_name or ''} > {j.subtopic_name or ''}: Kuyrukta bekliyor")
+
+    done_cnt = counts.get("completed", 0)
+    failed_cnt = counts.get("failed", 0)
+    pending_cnt = counts.get("pending", 0)
+    proc_cnt = counts.get("processing", 0)
+    total_active = done_cnt + failed_cnt + pending_cnt + proc_cnt
+    
+    return {
+        "running": proc_cnt > 0 or pending_cnt > 0,
+        "done": done_cnt,
+        "failed": failed_cnt,
+        "pending": pending_cnt,
+        "processing": proc_cnt,
+        "total": total_active,
+        "log": logs,
+        "recent_jobs": recent_jobs
+    }
 
 @api.delete("/admin/generate-questions/cancel")
-async def cancel_question_generation(admin: dict = Depends(admin_user)):
-    global _question_gen_task, _question_gen_status
-    if _question_gen_task and not _question_gen_task.done():
-        _question_gen_task.cancel()
-        _question_gen_status["running"] = False
-        _question_gen_status["log"].append("⛔ Admin tarafından durduruldu.")
-        return {"ok": True}
-    return {"ok": False, "message": "Devam eden bir işlem yok."}
+async def cancel_question_generation(admin: dict = Depends(admin_user), db: AsyncSession = Depends(get_db)):
+    await db.execute(
+        update(M.AIGenerationJob)
+        .where(M.AIGenerationJob.status == "pending")
+        .values(status="cancelled", completed_at=now_iso())
+    )
+    await db.commit()
+    return {"ok": True, "message": "Bekleyen tüm görevler iptal edildi."}
+
+@api.post("/admin/generate-questions/retry-failed")
+async def retry_failed_question_generation(admin: dict = Depends(admin_user), db: AsyncSession = Depends(get_db)):
+    res = await db.execute(
+        update(M.AIGenerationJob)
+        .where(M.AIGenerationJob.status == "failed")
+        .values(
+            status="pending",
+            attempt_count=0,
+            error_message=None,
+            completed_at=None
+        )
+    )
+    await db.commit()
+    updated_count = res.rowcount
+    return {
+        "ok": True,
+        "message": f"{updated_count} adet başarısız konu tekrar kuyruğa eklendi ve üretime başlandı.",
+        "retried_count": updated_count
+    }
 
 
 # ─── Admin: Otomatik İçerik Üretimi ──────────────────────────────────────────
@@ -3151,46 +4515,12 @@ async def admin_generate_curriculum(
       ]
     }}
     """
-    
-    key = key_manager.get_active_key("gemini")
-    text_content = ""
-    if key:
-        try:
-            url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={key}"
-            payload = {
-                "contents": [{"parts": [{"text": prompt}]}],
-                "generationConfig": {
-                    "temperature": 0.5,
-                    "responseMimeType": "application/json"
-                }
-            }
-            async with httpx.AsyncClient(timeout=60) as client:
-                r = await client.post(url, json=payload)
-                r.raise_for_status()
-                text_content = r.json()["candidates"][0]["content"]["parts"][0]["text"]
-        except Exception as e:
-            logger.warning(f"Curriculum Gemini generation failed: {e}")
-
-    if not text_content:
-        openai_key = key_manager.get_active_key("openai")
-        if openai_key:
-            try:
-                headers = {"Authorization": f"Bearer {openai_key}", "Content-Type": "application/json"}
-                payload = {
-                    "model": "gpt-4o-mini",
-                    "messages": [
-                        {"role": "system", "content": "Sen müfredat hazırlama uzmanısın. Yalnızca geçerli JSON döndür."},
-                        {"role": "user", "content": prompt}
-                    ],
-                    "temperature": 0.5,
-                    "response_format": {"type": "json_object"}
-                }
-                async with httpx.AsyncClient(timeout=60) as client:
-                    r = await client.post("https://api.openai.com/v1/chat/completions", json=payload, headers=headers)
-                    r.raise_for_status()
-                    text_content = r.json()["choices"][0]["message"]["content"]
-            except Exception as e:
-                logger.warning(f"Curriculum OpenAI generation failed: {e}")
+    from ai import call_resilient_ai
+    text_content = await call_resilient_ai(
+        system="Sen profesyonel bir eğitim müfredatı uzmanısın. Yalnızca geçerli JSON döndür.",
+        prompt=prompt,
+        is_json=True
+    )
 
     if not text_content:
         raise HTTPException(status_code=500, detail="Müfredat üretmek için geçerli bir AI anahtarı bulunamadı veya API hatası oluştu.")
@@ -3209,6 +4539,7 @@ async def admin_generate_curriculum(
             created_at=now_iso(),
         )
         db.add(exam_obj)
+        await db.flush()
         
         subjects = data.get("subjects", [])
         for idx_s, s in enumerate(subjects):
@@ -3223,6 +4554,7 @@ async def admin_generate_curriculum(
                 created_at=now_iso(),
             )
             db.add(subj_obj)
+            await db.flush()
             
             topics = s.get("topics", [])
             for idx_t, t in enumerate(topics):
@@ -3237,6 +4569,7 @@ async def admin_generate_curriculum(
                     created_at=now_iso(),
                 )
                 db.add(topic_obj)
+                await db.flush()
                 
                 subtopics = t.get("subtopics", [])
                 for idx_st, st in enumerate(subtopics):
@@ -3248,6 +4581,7 @@ async def admin_generate_curriculum(
                         created_at=now_iso(),
                     )
                     db.add(subtopic_obj)
+                await db.flush()
         
         await db.commit()
         return {"ok": True, "exam_id": exam_id, "curriculum": data}
@@ -3503,11 +4837,17 @@ async def startup():
     S.init_storage()
     async with AsyncSessionLocal() as session:
         await A.seed_admin(session)
+        await AICoach.key_manager.sync_from_db(session)
         exams_count = (await session.execute(select(func.count()).select_from(M.Exam))).scalar() or 0
         if exams_count < 10:
             from seed_master_osym_curriculum import seed_master_curriculum
             await seed_master_curriculum()
-    logger.info("Startup complete: MySQL schema initialized & Master OSYM Curriculum verified")
+            
+    # Start the background AI generation queue worker
+    import worker
+    asyncio.create_task(worker.queue_worker_loop())
+    
+    logger.info("Startup complete: MySQL schema initialized, API Keys synced, Worker started")
 
 
 

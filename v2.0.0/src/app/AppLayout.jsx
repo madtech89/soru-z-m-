@@ -6,7 +6,7 @@ import { fetchExams, fetchSubjects, fetchTopics, EXAM_CATEGORIES, fetchCreditBal
 import {
   LayoutDashboard, GraduationCap, FileText, Library, Target,
   Trophy, Brain, User, LogOut, Sparkles, ShieldCheck, BookOpen, Calculator, Menu, X, Award, MessageSquare,
-  ChevronDown, ChevronRight, Compass, Clock, BookCopy, Home, Zap,
+  ChevronDown, ChevronRight, Compass, Clock, BookCopy, Home, Zap, RotateCcw,
 } from "lucide-react";
 
 import { DEFAULT_EXAMS } from "@/lib/api";
@@ -663,6 +663,7 @@ export default function AppLayout() {
                       ["/app/soru-bankasi", "Soru Bankası", Library, false],
                       ["/app/ders-notlari", "Ders Notları", BookOpen, false],
                       ["/app/eksiklerim", "Eksiklerim", Target, false],
+                      ["/app/yanlislarim", "Yanlış Defteri", RotateCcw, false],
                       ["/app/puan-hesapla", "Puan Hesapla", Calculator, false],
                       ["/app/tercih-robotu", "Tercih Robotu", Compass, false],
                       ["/app/geri-sayim", "Geri Sayım", Clock, false],

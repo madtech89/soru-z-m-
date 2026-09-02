@@ -1,13 +1,14 @@
 import { useEffect, useState, useCallback } from "react";
 import { motion } from "framer-motion";
-import { Users, GraduationCap, HelpCircle, FileText, Database, BarChart3, Plus, Loader2, BookOpen, Calculator, Layers, ListTree, FileQuestion, ClipboardList, Trash2, Wand2, Crown, ArrowRight, ArrowUpRight, Calendar, Key, Sparkles, Square, PlayCircle, Newspaper, Edit3 } from "lucide-react";
+import { Users, GraduationCap, HelpCircle, FileText, Database, BarChart3, Plus, Loader2, BookOpen, Calculator, Layers, ListTree, FileQuestion, ClipboardList, Trash2, Wand2, Crown, ArrowRight, ArrowUpRight, Calendar, Key, Sparkles, Square, PlayCircle, Newspaper, Edit3, Building2, RotateCcw } from "lucide-react";
 
 import {
   fetchAdminStats, fetchExams, fetchSubjects, fetchTopics, fetchSubtopics,
   fetchExamScoring, saveExamScoring, createExam, createSubject, createTopic,
-  createSubtopic, createQuestion, createNote, createTest, fetchQuestionsForExam,
+  createSubtopic, createQuestion, createTest, fetchQuestionsForExam,
   updateExam, deleteExam, updateSubject, deleteSubject, updateTopic, deleteTopic,
   updateSubtopic, deleteSubtopic,
+  fetchAdminNotes, createAdminNote, updateAdminNote, deleteAdminNote, generateAiNote,
   api as apiClient,
 } from "@/lib/api";
 import { EXAM_CATEGORIES } from "@/lib/api";
@@ -19,6 +20,7 @@ import AdminExamDates from "@/app/AdminExamDates";
 import AdminApiKeys from "@/app/AdminApiKeys";
 import AdminBlog from "@/app/AdminBlog";
 import AdminTercih from "@/app/AdminTercih";
+import AdminExamArchitect from "@/app/AdminExamArchitect";
 import { toast } from "sonner";
 
 
@@ -83,8 +85,23 @@ export default function Admin() {
   // Test (deneme) form
   const [testForm, setTestForm] = useState({ examId: "", name: "", description: "", duration: 30, difficulty: "orta", questionCount: 30 });
 
-  // Note form
-  const [note, setNote] = useState({ exam_id: "", subject_id: "", topic_id: "", title: "", description: "", content: "", video_url: "" });
+  // Note form & Management State
+  const [noteView, setNoteView] = useState("list"); // "list" | "editor"
+  const [adminNotes, setAdminNotes] = useState([]);
+  const [adminNotesTotal, setAdminNotesTotal] = useState(0);
+  const [notePage, setNotePage] = useState(1);
+  const [noteFilterExam, setNoteFilterExam] = useState("");
+  const [noteSearchQuery, setNoteSearchQuery] = useState("");
+  const [notesLoading, setNotesLoading] = useState(false);
+  const [editingNoteId, setEditingNoteId] = useState(null);
+
+  const [note, setNote] = useState({ exam_id: "", subject_id: "", topic_id: "", subtopic_id: "", title: "", description: "", content: "", video_url: "", file_name: "", file_path: "" });
+  
+  // AI Note Generator State
+  const [aiNotePrompt, setAiNotePrompt] = useState("");
+  const [aiNoteStyle, setAiNoteStyle] = useState("mala_anlatir_gibi");
+  const [aiNoteLoading, setAiNoteLoading] = useState(false);
+  const [aiNoteOpen, setAiNoteOpen] = useState(false);
 
   // Scoring
   const [scoreExam, setScoreExam] = useState("");
@@ -284,15 +301,116 @@ export default function Admin() {
     } catch { toast.error("Eklenemedi."); } finally { setBusy(false); }
   };
 
-  const handleCreateNote = async (e) => {
+  const loadAdminNotes = useCallback(async () => {
+    setNotesLoading(true);
+    try {
+      const res = await fetchAdminNotes({
+        exam_id: noteFilterExam || undefined,
+        search: noteSearchQuery || undefined,
+        page: notePage,
+        page_size: 15,
+      });
+      setAdminNotes(res.items || []);
+      setAdminNotesTotal(res.total || 0);
+    } catch {
+      toast.error("Ders notları yüklenemedi.");
+    } finally {
+      setNotesLoading(false);
+    }
+  }, [noteFilterExam, noteSearchQuery, notePage]);
+
+  useEffect(() => {
+    if (tab === "note" && noteView === "list") {
+      loadAdminNotes();
+    }
+  }, [tab, noteView, loadAdminNotes]);
+
+  const handleOpenNewNote = () => {
+    setEditingNoteId(null);
+    setNote({ exam_id: "", subject_id: "", topic_id: "", subtopic_id: "", title: "", description: "", content: "", video_url: "", file_name: "", file_path: "" });
+    setNoteView("editor");
+  };
+
+  const handleEditNote = (n) => {
+    setEditingNoteId(n.id);
+    setNote({
+      exam_id: n.exam_id || "",
+      subject_id: n.subject_id || "",
+      topic_id: n.topic_id || "",
+      subtopic_id: n.subtopic_id || "",
+      title: n.title || "",
+      description: n.description || "",
+      content: n.content || "",
+      video_url: n.video_url || "",
+      file_name: n.file_name || "",
+      file_path: n.file_path || "",
+    });
+    setNoteView("editor");
+  };
+
+  const handleDeleteNote = async (noteId) => {
+    if (!window.confirm("Bu ders notunu silmek istediğinizden emin misiniz?")) return;
+    try {
+      await deleteAdminNote(noteId);
+      toast.success("Ders notu silindi.");
+      loadAdminNotes();
+      loadStats();
+    } catch (err) {
+      toast.error(err.response?.data?.detail || "Ders notu silinemedi.");
+    }
+  };
+
+  const handleSaveNote = async (e) => {
     e.preventDefault();
-    if (!note.exam_id || !note.title) return toast.error("Sınav ve başlık gerekli.");
+    if (!note.exam_id || !note.title) return toast.error("Sınav ve başlık zorunludur.");
     setBusy(true);
     try {
-      await createNote(note);
-      toast.success("Ders notu eklendi!");
-      setNote({ exam_id: "", subject_id: "", topic_id: "", title: "", description: "", content: "", video_url: "" });
-    } catch { toast.error("Eklenemedi."); } finally { setBusy(false); }
+      if (editingNoteId) {
+        await updateAdminNote(editingNoteId, note);
+        toast.success("Ders notu güncellendi!");
+      } else {
+        await createAdminNote(note);
+        toast.success("Yeni ders notu yayınlandı!");
+      }
+      setNote({ exam_id: "", subject_id: "", topic_id: "", subtopic_id: "", title: "", description: "", content: "", video_url: "", file_name: "", file_path: "" });
+      setEditingNoteId(null);
+      setNoteView("list");
+      loadAdminNotes();
+      loadStats();
+    } catch (err) {
+      toast.error(err.response?.data?.detail || "Ders notu kaydedilemedi.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const handleGenerateAiNote = async () => {
+    if (!note.exam_id || !note.subject_id || !note.topic_id) {
+      return toast.error("Lütfen önce Sınav, Ders ve Konu hedefini seçin.");
+    }
+    setAiNoteLoading(true);
+    try {
+      const res = await generateAiNote({
+        exam_id: note.exam_id,
+        subject_id: note.subject_id,
+        topic_id: note.topic_id,
+        subtopic_id: note.subtopic_id || null,
+        style: aiNoteStyle,
+        custom_instructions: aiNotePrompt || null,
+      });
+      setNote((prev) => ({
+        ...prev,
+        title: prev.title || res.title,
+        description: prev.description || res.description,
+        content: res.content,
+      }));
+      setAiNoteOpen(false);
+      toast.success("🎉 Konu anlatımı üretildi ve editöre aktarıldı! İstediğiniz gibi düzenleyebilirsiniz.");
+    } catch (err) {
+      toast.error(err.response?.data?.detail || "Konu anlatımı üretilemedi.");
+    } finally {
+      setAiNoteLoading(false);
+    }
   };
 
   const handleSaveScoring = async () => {
@@ -311,8 +429,8 @@ export default function Admin() {
     { icon: Users, label: "Toplam Üye", value: stats.users, color: "#0F172A", tab: "users", sub: "Kayıtlı Öğrenciler" },
     { icon: Crown, label: "Ücretli (Pro) Üye", value: stats.paid_users || 0, color: "#D97706", tab: "users", sub: "Premium Aboneler" },
     { icon: BookOpen, label: "Ders Notu & Blog", value: stats.notes || 0, color: "#EC4899", tab: "note", sub: "Dizgi & Anlatım" },
-    { icon: Layers, label: "Ders Sayısı", value: stats.subjects || 0, color: "#6366F1", tab: "subject", sub: "Tüm Branşlar" },
-    { icon: ListTree, label: "Konu Sayısı", value: stats.topics || 0, color: "#8B5CF6", tab: "topic", sub: "Müfredat Konuları" },
+    { icon: Layers, label: "Ders Sayısı", value: stats.subjects || 0, color: "#6366F1", tab: "subject", sub: "Tüm Branşlar (86 Ders)" },
+    { icon: ListTree, label: "Müfredat Konuları", value: stats.total_topics || ((stats.topics || 0) + (stats.subtopics || 0)), color: "#8B5CF6", tab: "topic", sub: `${stats.topics || 0} Ana / ${stats.subtopics || 0} Alt Konu` },
     { icon: GraduationCap, label: "Sınav Türü", value: stats.exams || 0, color: "#14B8A6", tab: "exam", sub: "YKS, LGS, KPSS..." },
     { icon: Database, label: "Çözülen Soru", value: stats.answers || 0, color: "#F43F5E", tab: "users", sub: "Öğrenci Cevapları" },
     { icon: BarChart3, label: "Tamamlanan Deneme", value: stats.results || 0, color: "#0284C7", tab: "users", sub: "Sınav Seansları" },
@@ -399,12 +517,18 @@ export default function Admin() {
 
       {/* TAB: Exam */}
       {tab === "exam" && (
-        <div className="grid md:grid-cols-2 gap-6">
-          <Card className="p-6 h-fit">
-            <h3 className="font-heading font-bold text-base text-ink mb-4">
-              {curriculumEdit.id ? "Sınav Düzenle" : "Yeni Sınav Ekle"}
-            </h3>
-            <form onSubmit={handleCreateExam} className="space-y-4" data-testid="admin-exam-form">
+        <div className="space-y-8">
+          {/* AI EXAM ARCHITECT & ONE-CLICK PROVISIONER */}
+          <AdminExamArchitect onCurriculumCreated={() => { loadStats(); loadExams(); }} />
+
+          <div className="border-t border-zinc-200 pt-6">
+            <h3 className="text-sm font-bold text-zinc-500 uppercase tracking-wider mb-4">Manuel Sınav Yönetimi</h3>
+            <div className="grid md:grid-cols-2 gap-6">
+              <Card className="p-6 h-fit">
+                <h3 className="font-heading font-bold text-base text-ink mb-4">
+                  {curriculumEdit.id ? "Sınav Düzenle" : "Yeni Sınav Ekle (Manuel)"}
+                </h3>
+                <form onSubmit={handleCreateExam} className="space-y-4" data-testid="admin-exam-form">
               <div>
                 <label className="text-xs font-bold text-zinc-500 block mb-1">Sınav adı</label>
                 <input required value={exam.name} onChange={(e) => setExam((s) => ({ ...s, name: e.target.value }))} className={inputCls} data-testid="admin-exam-name" />
@@ -476,6 +600,8 @@ export default function Admin() {
               </div>
             )}
           </Card>
+            </div>
+          </div>
         </div>
       )}
 
@@ -805,60 +931,270 @@ export default function Admin() {
         </Card>
       )}
 
-      {/* TAB: Note (Ders Notu ve Dizgi Stüdyosu) */}
+      {/* TAB: Note (Ders Notu & Konu Anlatımı Yönetimi & AI Dizgi Stüdyosu) */}
       {tab === "note" && (
-        <Card className="p-6 max-w-5xl">
-          <form onSubmit={handleCreateNote} className="space-y-5" data-testid="admin-note-form">
-            <div className="p-4 bg-zinc-50 rounded-2xl border border-zinc-200 space-y-3">
-              <span className="text-xs font-bold uppercase tracking-wider text-zinc-500 block">1. Sınav, Ders ve Konu Hedefi</span>
-              <ExamPicker
-                exams={exams}
-                examId={note.exam_id}
-                subjectId={note.subject_id}
-                topicId={note.topic_id}
-                onChange={(v) => setNote((s) => ({ ...s, exam_id: v.examId, subject_id: v.subjectId, topic_id: v.topicId }))}
-              />
-            </div>
-
-            <div className="grid sm:grid-cols-2 gap-3">
+        <div className="space-y-6">
+          {/* Üst Sekme Seçici */}
+          <div className="flex flex-wrap items-center justify-between gap-3 p-3 bg-zinc-900 text-white rounded-3xl">
+            <div className="flex items-center gap-2">
+              <span className="h-9 w-9 rounded-2xl bg-pink-600 grid place-items-center text-white font-bold">
+                <BookOpen size={20} />
+              </span>
               <div>
-                <label className="block text-xs font-bold text-zinc-600 mb-1">Ders Notu Başlığı *</label>
-                <input required placeholder="Örn: Türev Alma Kuralları ve Geometrik Yorumu" value={note.title} onChange={(e) => setNote((s) => ({ ...s, title: e.target.value }))} className={inputCls} data-testid="admin-note-title" />
-              </div>
-              <div>
-                <label className="block text-xs font-bold text-zinc-600 mb-1">Kısa Özet / Alt Başlık</label>
-                <input placeholder="Örn: AYT Matematik için kritik formüller ve soru çözüm teknikleri" value={note.description} onChange={(e) => setNote((s) => ({ ...s, description: e.target.value }))} className={inputCls} />
+                <div className="font-heading font-extrabold text-base">Ders Notları & Konu Anlatım Stüdyosu</div>
+                <div className="text-xs text-zinc-400">Konu anlatımı belgelerini yönetin, AI ile 'mala anlatır gibi' içerik üretin ve düzenleyin</div>
               </div>
             </div>
 
-            <div className="grid sm:grid-cols-2 gap-3">
-              <div>
-                <label className="block text-xs font-bold text-zinc-600 mb-1">YouTube / Video Anlatım URL (Opsiyonel)</label>
-                <input placeholder="https://www.youtube.com/watch?v=..." value={note.video_url} onChange={(e) => setNote((s) => ({ ...s, video_url: e.target.value }))} className={inputCls} />
-              </div>
-              <div>
-                <label className="block text-xs font-bold text-zinc-600 mb-1">Ek Dosya / PDF Adı (Otomatik doldurulur)</label>
-                <input placeholder="Örn: Turev_Ozet_Foyu.pdf" value={note.file_name || ""} onChange={(e) => setNote((s) => ({ ...s, file_name: e.target.value }))} className={inputCls} />
-              </div>
-            </div>
-
-            {/* Profesyonel Dizgi Stüdyosu (Canlı Önizleme & Görsel Araçları) */}
-            <div className="pt-2">
-              <span className="text-xs font-bold uppercase tracking-wider text-zinc-500 block mb-2">2. Konu Anlatımı Dizgisi & Görsel Düzenleme</span>
-              <NoteStudio
-                note={note}
-                setNote={setNote}
-                isSubmitting={busy}
-              />
-            </div>
-
-            <div className="pt-4 border-t border-zinc-100 flex items-center justify-end gap-3">
-              <button disabled={busy || !note.title || !note.exam_id} className="flex items-center gap-2 bg-ink text-white font-bold px-6 py-3 rounded-2xl hover:bg-subject-matematik transition-colors disabled:opacity-50 shadow-md shadow-ink/10" data-testid="admin-note-submit">
-                {busy ? <Loader2 className="animate-spin" size={18} /> : <BookOpen size={18} />} Ders Notunu Yayınla
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => setNoteView("list")}
+                className={`px-4 py-2 rounded-xl text-xs font-bold transition flex items-center gap-1.5 ${noteView === "list" ? "bg-white text-zinc-900 shadow-md" : "text-zinc-400 hover:text-white"}`}
+              >
+                <Layers size={14} /> Tüm Notlar ({adminNotesTotal})
+              </button>
+              <button
+                onClick={handleOpenNewNote}
+                className={`px-4 py-2 rounded-xl text-xs font-bold transition flex items-center gap-1.5 ${noteView === "editor" ? "bg-pink-600 text-white shadow-md" : "text-zinc-400 hover:text-white"}`}
+              >
+                <Plus size={14} /> {editingNoteId ? "✏️ Notu Düzenle" : "➕ Yeni Not Yaz / Üret"}
               </button>
             </div>
-          </form>
-        </Card>
+          </div>
+
+          {/* 1. GÖRÜNÜM: DERS NOTLARI LİSTESİ */}
+          {noteView === "list" && (
+            <div className="space-y-4">
+              <Card className="p-4">
+                <div className="grid sm:grid-cols-3 gap-3">
+                  <div className="sm:col-span-2">
+                    <input
+                      type="text"
+                      placeholder="Not başlığı veya içeriğinde ara..."
+                      value={noteSearchQuery}
+                      onChange={(e) => { setNoteSearchQuery(e.target.value); setNotePage(1); }}
+                      className={inputCls}
+                    />
+                  </div>
+                  <div>
+                    <select
+                      value={noteFilterExam}
+                      onChange={(e) => { setNoteFilterExam(e.target.value); setNotePage(1); }}
+                      className={inputCls}
+                    >
+                      <option value="">Tüm Sınavlar</option>
+                      {exams.map((e) => <option key={e.id} value={e.id}>{e.name}</option>)}
+                    </select>
+                  </div>
+                </div>
+              </Card>
+
+              {notesLoading ? (
+                <Spinner />
+              ) : adminNotes.length === 0 ? (
+                <Card className="p-12 text-center text-zinc-400 space-y-3">
+                  <BookOpen size={40} className="mx-auto text-zinc-300" />
+                  <div className="font-heading font-bold text-lg text-zinc-600">Henüz yayınlanmış ders notu bulunamadı</div>
+                  <p className="text-xs text-zinc-400">Yeni bir konu anlatımı yazmak veya AI ile üretmek için "Yeni Not Yaz / Üret" butonuna tıklayın.</p>
+                  <button
+                    onClick={handleOpenNewNote}
+                    className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-pink-600 text-white text-xs font-bold hover:bg-pink-700 transition shadow-sm"
+                  >
+                    <Plus size={14} /> İlk Ders Notunu Oluştur
+                  </button>
+                </Card>
+              ) : (
+                <div className="space-y-3">
+                  {adminNotes.map((n, idx) => (
+                    <Card key={n.id || idx} className="p-5 hover:border-pink-300 transition-colors">
+                      <div className="flex items-start justify-between gap-4">
+                        <div className="space-y-2 flex-1">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <span className="px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-pink-50 text-pink-700">
+                              {n.exam_id ? exams.find(e => e.id === n.exam_id)?.name || "Sınav Notu" : "Genel Not"}
+                            </span>
+                            {n.created_at && (
+                              <span className="text-[11px] text-zinc-400">
+                                {new Date(n.created_at).toLocaleDateString("tr-TR")}
+                              </span>
+                            )}
+                          </div>
+
+                          <h4 className="font-heading font-bold text-base text-ink">
+                            {n.title}
+                          </h4>
+
+                          {n.description && (
+                            <p className="text-xs text-zinc-500 line-clamp-2">
+                              {n.description}
+                            </p>
+                          )}
+                        </div>
+
+                        <div className="flex items-center gap-2">
+                          <button
+                            onClick={() => handleEditNote(n)}
+                            className="p-2.5 rounded-xl text-zinc-600 hover:text-pink-600 hover:bg-pink-50 transition border border-zinc-200"
+                            title="Düzenle"
+                          >
+                            <Edit3 size={16} />
+                          </button>
+                          <button
+                            onClick={() => handleDeleteNote(n.id)}
+                            className="p-2.5 rounded-xl text-zinc-400 hover:text-rose-600 hover:bg-rose-50 transition border border-zinc-200"
+                            title="Sil"
+                          >
+                            <Trash2 size={16} />
+                          </button>
+                        </div>
+                      </div>
+                    </Card>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* 2. GÖRÜNÜM: DERS NOTU DÜZENLEME & AI STÜDYOSU */}
+          {noteView === "editor" && (
+            <Card className="p-6 max-w-5xl">
+              <div className="flex items-center justify-between pb-4 mb-4 border-b border-zinc-100">
+                <div className="flex items-center gap-2 font-heading font-bold text-base text-ink">
+                  <Edit3 size={18} className="text-pink-600" />
+                  {editingNoteId ? "Ders Notunu Düzenle & Güncelle" : "Yeni Ders Notu & Konu Anlatımı Yaz"}
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setNoteView("list")}
+                  className="text-xs font-bold text-zinc-500 hover:text-zinc-800"
+                >
+                  ← Notlar Listesine Dön
+                </button>
+              </div>
+
+              <form onSubmit={handleSaveNote} className="space-y-5">
+                <div className="p-4 bg-zinc-50 rounded-2xl border border-zinc-200 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-bold uppercase tracking-wider text-zinc-600 block">1. Sınav, Ders ve Konu Hedefi</span>
+                    <button
+                      type="button"
+                      onClick={() => setAiNoteOpen(!aiNoteOpen)}
+                      className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-gradient-to-r from-violet-600 to-pink-600 text-white text-xs font-bold hover:opacity-90 shadow-sm"
+                    >
+                      <Sparkles size={14} /> 🤖 AI İle 'Mala Anlatır Gibi' Konu Anlatımı Yazdır
+                    </button>
+                  </div>
+
+                  <ExamPicker
+                    exams={exams}
+                    examId={note.exam_id}
+                    subjectId={note.subject_id}
+                    topicId={note.topic_id}
+                    subtopicId={note.subtopic_id}
+                    showSubtopic={true}
+                    onChange={(v) => setNote((s) => ({ ...s, exam_id: v.examId, subject_id: v.subjectId, topic_id: v.topicId, subtopic_id: v.subtopicId }))}
+                  />
+
+                  {/* AI Konu Anlatımı Üretici Modalı/Paneli */}
+                  {aiNoteOpen && (
+                    <div className="mt-3 p-4 rounded-2xl bg-gradient-to-br from-violet-50 via-white to-pink-50 border-2 border-violet-200 space-y-3 animate-in fade-in slide-in-from-top-2 duration-200">
+                      <div className="flex items-center justify-between">
+                        <div className="font-heading font-bold text-sm text-violet-950 flex items-center gap-2">
+                          <Sparkles size={16} className="text-violet-600" />
+                          Yapay Zeka Konu Anlatımı Sihirbazı
+                        </div>
+                        <span className="text-[10px] font-extrabold px-2 py-0.5 rounded-full bg-violet-100 text-violet-800">ÖSYM & Kurum Uyumlu</span>
+                      </div>
+
+                      <div className="grid sm:grid-cols-2 gap-3">
+                        <div>
+                          <label className="text-xs font-bold text-zinc-700 block mb-1">Anlatım Tarzı & Üslup</label>
+                          <select
+                            value={aiNoteStyle}
+                            onChange={(e) => setAiNoteStyle(e.target.value)}
+                            className={inputCls}
+                          >
+                            <option value="mala_anlatir_gibi">🍼 Mala Anlatır Gibi (En Somut, En Sade, Sıfır Bilgi Varsayan)</option>
+                            <option value="pratik_puf_noktalari">⚡ Pratik Püf Noktaları, Tuzaklar ve Kısayollar</option>
+                            <option value="soru_odakli">🎯 Bol Çözümlü Kolay/Orta/Zor Soru Odaklı</option>
+                            <option value="detayli_akademik">🎓 Detaylı & Formül İspatlı Akademik Derinlik</option>
+                          </select>
+                        </div>
+                        <div>
+                          <label className="text-xs font-bold text-zinc-700 block mb-1">Özel İstem / Talimatınız (Opsiyonel)</label>
+                          <input
+                            type="text"
+                            placeholder="Örn: Günlük hayattan manav örneği ver, ASCII şemalar ve 3 çözümlü soru ekle"
+                            value={aiNotePrompt}
+                            onChange={(e) => setAiNotePrompt(e.target.value)}
+                            className={inputCls}
+                          />
+                        </div>
+                      </div>
+
+                      <div className="flex justify-end pt-1">
+                        <button
+                          type="button"
+                          onClick={handleGenerateAiNote}
+                          disabled={aiNoteLoading || !note.exam_id || !note.topic_id}
+                          className="flex items-center gap-2 px-5 py-2.5 rounded-xl bg-violet-600 text-white text-xs font-bold hover:bg-violet-700 disabled:opacity-50 transition shadow-sm"
+                        >
+                          {aiNoteLoading ? <Loader2 size={15} className="animate-spin" /> : <Wand2 size={15} />}
+                          ✨ Konu Anlatımını Üret & Editöre Aktar
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                <div className="grid sm:grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs font-bold text-zinc-600 mb-1">Ders Notu Başlığı *</label>
+                    <input required placeholder="Örn: Mutlak Değer ve Eşitsizliklerin Geometrik Yorumu" value={note.title} onChange={(e) => setNote((s) => ({ ...s, title: e.target.value }))} className={inputCls} />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-bold text-zinc-600 mb-1">Kısa Özet / Alt Başlık</label>
+                    <input placeholder="Örn: Sıfırdan zirveye tüm formüller, tuzaklar ve çözümlü örnekler" value={note.description} onChange={(e) => setNote((s) => ({ ...s, description: e.target.value }))} className={inputCls} />
+                  </div>
+                </div>
+
+                <div className="grid sm:grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs font-bold text-zinc-600 mb-1">YouTube / Video Anlatım URL (Opsiyonel)</label>
+                    <input placeholder="https://www.youtube.com/watch?v=..." value={note.video_url} onChange={(e) => setNote((s) => ({ ...s, video_url: e.target.value }))} className={inputCls} />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-bold text-zinc-600 mb-1">Ek Dosya / PDF Adı (Opsiyonel)</label>
+                    <input placeholder="Örn: Mutlak_Deger_Foyu.pdf" value={note.file_name || ""} onChange={(e) => setNote((s) => ({ ...s, file_name: e.target.value }))} className={inputCls} />
+                  </div>
+                </div>
+
+                {/* Profesyonel Dizgi Stüdyosu (Canlı Önizleme & Görsel Araçları) */}
+                <div className="pt-2">
+                  <span className="text-xs font-bold uppercase tracking-wider text-zinc-500 block mb-2">2. Konu Anlatımı Dizgisi & Görsel Düzenleme</span>
+                  <NoteStudio
+                    note={note}
+                    setNote={setNote}
+                    isSubmitting={busy}
+                  />
+                </div>
+
+                <div className="pt-4 border-t border-zinc-100 flex items-center justify-between">
+                  <button
+                    type="button"
+                    onClick={() => setNoteView("list")}
+                    className="px-4 py-2 rounded-xl text-xs font-bold text-zinc-600 hover:bg-zinc-100 transition"
+                  >
+                    İptal
+                  </button>
+                  <button disabled={busy || !note.title || !note.exam_id} className="flex items-center gap-2 bg-pink-600 text-white font-bold px-6 py-3 rounded-2xl hover:bg-pink-700 transition disabled:opacity-50 shadow-md shadow-pink-600/20">
+                    {busy ? <Loader2 className="animate-spin" size={18} /> : <BookOpen size={18} />} {editingNoteId ? "Değişiklikleri Güncelle" : "Ders Notunu Yayınla"}
+                  </button>
+                </div>
+              </form>
+            </Card>
+          )}
+        </div>
       )}
 
 
@@ -934,7 +1270,7 @@ function ContentGenTab() {
   const [generatedCurriculum, setGeneratedCurriculum] = useState(null);
 
   // 3. Bulk Question Generator states
-  const [qForm, setQForm] = useState({ exam_id: "", count_per_subtopic: 5, difficulty: "orta", style: "standard" });
+  const [qForm, setQForm] = useState({ exam_id: "", count_per_subtopic: 5, difficulty: "orta", style: "standard", delay_seconds: 60, only_missing: true });
   const [qStatus, setQStatus] = useState({ running: false, done: 0, failed: 0, total: 0, log: [] });
   const [qLoading, setQLoading] = useState(false);
   const [qPolling, setQPolling] = useState(false);
@@ -1037,9 +1373,16 @@ function ContentGenTab() {
         count_per_subtopic: Number(qForm.count_per_subtopic) || 5,
         difficulty: qForm.difficulty,
         style: qForm.style,
+        delay_seconds: Number(qForm.delay_seconds) || 60,
+        only_missing: qForm.only_missing !== false,
       };
       const res = await apiClient.post("/admin/generate-questions", body);
-      setQStatus(res.data.status || qStatus);
+      if (res.data?.ok) {
+        toast.success(res.data.message || "Kuyruğa başarıyla eklendi.");
+      } else if (res.data?.message) {
+        toast.error(res.data.message);
+      }
+      fetchQStatus();
       setQPolling(true);
     } catch (err) {
       toast.error(err.response?.data?.detail || "Başlatılamadı.");
@@ -1053,6 +1396,17 @@ function ContentGenTab() {
       await apiClient.delete("/admin/generate-questions/cancel");
       fetchQStatus();
     } catch {}
+  };
+
+  const handleRetryFailedQBulk = async () => {
+    try {
+      const res = await apiClient.post("/admin/generate-questions/retry-failed");
+      toast.success(res.data.message || "Başarısız konular yeniden kuyruğa eklendi.");
+      fetchQStatus();
+      setQPolling(true);
+    } catch (err) {
+      toast.error(err.response?.data?.detail || "İşlem başarısız oldu.");
+    }
   };
 
   const pct = status.total > 0 ? Math.round((status.done / status.total) * 100) : 0;
@@ -1322,6 +1676,8 @@ function ContentGenTab() {
                       onChange={e => setQForm(f => ({ ...f, count_per_subtopic: e.target.value }))}
                       className={inputCls}
                     >
+                      <option value={1}>1 Soru (Hızlı)</option>
+                      <option value={2}>2 Soru</option>
                       <option value={3}>3 Soru</option>
                       <option value={5}>5 Soru (Önerilen)</option>
                       <option value={10}>10 Soru</option>
@@ -1357,12 +1713,45 @@ function ContentGenTab() {
                   </select>
                 </div>
 
-                <div className="flex gap-2 pt-2">
+                <div>
+                  <label className="text-xs font-bold text-zinc-600 block mb-1">
+                    ⏱️ Konu Başı Bekleme Süresi (Kota Koruması)
+                  </label>
+                  <select
+                    value={qForm.delay_seconds}
+                    onChange={e => setQForm(f => ({ ...f, delay_seconds: Number(e.target.value) }))}
+                    className={inputCls}
+                  >
+                    <option value={60}>60 Saniye / 1 Dakika (Varsayılan - En Güvenli)</option>
+                    <option value={90}>90 Saniye / 1.5 Dakika (Yüksek Kota Tasarrufu)</option>
+                    <option value={120}>120 Saniye / 2 Dakika (Sıfır Rate-Limit)</option>
+                    <option value={30}>30 Saniye (Hızlı Mod)</option>
+                    <option value={10}>10 Saniye (Ultra Hızlı - Ücretli API önerilir)</option>
+                  </select>
+                  <p className="text-[11px] text-zinc-400 mt-1">
+                    Ücretsiz Gemini/Groq kotalarının dolmaması için her konu arasında 1 dakika beklemek önerilir.
+                  </p>
+                </div>
+
+                <div className="flex items-center gap-2 p-2.5 rounded-xl bg-violet-50/60 border border-violet-100">
+                  <input
+                    type="checkbox"
+                    id="only_missing"
+                    checked={qForm.only_missing !== false}
+                    onChange={e => setQForm(f => ({ ...f, only_missing: e.target.checked }))}
+                    className="w-4 h-4 rounded text-violet-600 focus:ring-violet-500 cursor-pointer"
+                  />
+                  <label htmlFor="only_missing" className="text-xs font-semibold text-violet-900 cursor-pointer select-none">
+                    ✨ Yalnızca Sorusuz / Eksik Konuları Üret (Daha önce üretilenleri atla)
+                  </label>
+                </div>
+
+                <div className="space-y-2 pt-2">
                   {!qStatus.running ? (
                     <button
                       type="submit"
                       disabled={qLoading}
-                      className="w-full flex items-center justify-center gap-2 px-5 py-3 rounded-xl bg-violet-600 text-white text-xs font-bold hover:bg-violet-700 disabled:opacity-50 transition-colors"
+                      className="w-full flex items-center justify-center gap-2 px-5 py-3 rounded-xl bg-violet-600 text-white text-xs font-bold hover:bg-violet-700 disabled:opacity-50 transition-colors shadow-sm"
                     >
                       {qLoading ? <Loader2 size={16} className="animate-spin" /> : <PlayCircle size={16} />}
                       🚀 Toplu Soru Üretimini Başlat
@@ -1376,6 +1765,17 @@ function ContentGenTab() {
                       <Square size={16} /> Durdur
                     </button>
                   )}
+
+                  {qStatus.failed > 0 && !qStatus.running && (
+                    <button
+                      type="button"
+                      onClick={handleRetryFailedQBulk}
+                      className="w-full flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl bg-amber-50 text-amber-800 border border-amber-300 text-xs font-bold hover:bg-amber-100 shadow-sm transition-colors"
+                    >
+                      <RotateCcw size={15} />
+                      🔁 Başarısız Olan ({qStatus.failed}) Konuyu Yeniden Dene
+                    </button>
+                  )}
                 </div>
               </form>
             </Card>
@@ -1383,14 +1783,20 @@ function ContentGenTab() {
             <Card className="p-6 md:col-span-7 space-y-4">
               <div className="flex items-center justify-between">
                 <h3 className="font-heading font-bold text-sm text-ink">Canlı Üretim Durumu</h3>
-                {qStatus.running && (
-                  <span className="px-2 py-0.5 bg-violet-100 text-violet-700 font-bold rounded-lg text-[10px] uppercase animate-pulse">
-                    Devam Ediyor
+                {qStatus.running ? (
+                  <span className="px-2.5 py-1 bg-violet-100 text-violet-700 font-bold rounded-lg text-[11px] uppercase tracking-wider animate-pulse flex items-center gap-1.5">
+                    <span className="w-2 h-2 rounded-full bg-violet-600 animate-ping"></span>
+                    Üretim Devam Ediyor
                   </span>
-                )}
+                ) : qStatus.total > 0 && qStatus.done === qStatus.total ? (
+                  <span className="px-2.5 py-1 bg-emerald-100 text-emerald-700 font-bold rounded-lg text-[11px] uppercase tracking-wider flex items-center gap-1.5">
+                    <CheckCircle2 size={13} />
+                    Tamamlandı
+                  </span>
+                ) : null}
               </div>
 
-              {(qStatus.running || qStatus.total > 0) && (
+              {(qStatus.running || qStatus.total > 0 || (qStatus.log && qStatus.log.length > 0)) ? (
                 <div className="space-y-4">
                   <div className="flex items-center justify-between text-xs">
                     <span className="font-bold text-zinc-500">Müfredat İlerlemesi</span>
@@ -1403,26 +1809,36 @@ function ContentGenTab() {
                       transition={{ duration: 0.5 }}
                     />
                   </div>
-                  <div className="grid grid-cols-3 gap-3 text-center text-xs">
+                  <div className="grid grid-cols-4 gap-2 text-center text-xs">
                     <div className="p-3 bg-emerald-50 rounded-xl">
-                      <div className="text-xl font-black text-emerald-600">{qStatus.done}</div>
-                      <div className="text-[10px] text-zinc-500 mt-0.5">Tamamlanan Konu</div>
+                      <div className="text-lg font-black text-emerald-600">{qStatus.done || 0}</div>
+                      <div className="text-[10px] text-zinc-500 mt-0.5">Tamamlanan</div>
+                    </div>
+                    <div className="p-3 bg-violet-50 rounded-xl">
+                      <div className="text-lg font-black text-violet-600">{(qStatus.processing || 0) + (qStatus.pending || 0)}</div>
+                      <div className="text-[10px] text-zinc-500 mt-0.5">Kuyrukta</div>
                     </div>
                     <div className="p-3 bg-red-50 rounded-xl">
-                      <div className="text-xl font-black text-red-500">{qStatus.failed}</div>
-                      <div className="text-[10px] text-zinc-500 mt-0.5">Başarısız Konu</div>
+                      <div className="text-lg font-black text-red-500">{qStatus.failed || 0}</div>
+                      <div className="text-[10px] text-zinc-500 mt-0.5">Başarısız</div>
                     </div>
                     <div className="p-3 bg-zinc-50 rounded-xl">
-                      <div className="text-xl font-black text-zinc-700">{qStatus.total}</div>
-                      <div className="text-[10px] text-zinc-500 mt-0.5">Toplam Alt Konu</div>
+                      <div className="text-lg font-black text-zinc-700">{qStatus.total || 0}</div>
+                      <div className="text-[10px] text-zinc-500 mt-0.5">Toplam Görev</div>
                     </div>
                   </div>
-                </div>
-              )}
 
-              {qStatus.log && qStatus.log.length > 0 ? (
-                <div className="bg-zinc-900 rounded-xl p-4 font-mono text-[10px] text-zinc-200 max-h-48 overflow-auto space-y-1">
-                  {qStatus.log.map((line, i) => <div key={i}>{line}</div>)}
+                  {qStatus.log && qStatus.log.length > 0 && (
+                    <div className="space-y-1.5">
+                      <div className="text-[11px] font-bold text-zinc-500 flex items-center justify-between">
+                        <span>Canlı Terminal Günlüğü</span>
+                        <span className="text-[10px] text-zinc-400 font-normal">Son işlemler</span>
+                      </div>
+                      <div className="bg-zinc-900 rounded-xl p-4 font-mono text-[10px] text-zinc-200 max-h-56 overflow-auto space-y-1.5 shadow-inner">
+                        {qStatus.log.map((line, i) => <div key={i} className="leading-relaxed">{line}</div>)}
+                      </div>
+                    </div>
+                  )}
                 </div>
               ) : (
                 <div className="text-xs text-zinc-400 py-16 text-center">

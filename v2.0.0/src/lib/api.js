@@ -169,6 +169,32 @@ export async function answerPracticeQuestion(questionId, selectedAnswer, userId)
   return res.data;
 }
 
+// ============ MISTAKE LEDGER (YANLIŞ DEFTERİ) & FEEDBACK ============
+export async function fetchUserMistakes(params = {}) {
+  const res = await api.get("/user/mistakes", { params });
+  return res.data;
+}
+
+export async function updateMistakeReason(answerId, reason) {
+  const res = await api.post(`/user/mistakes/${answerId}/reason`, { reason });
+  return res.data;
+}
+
+export async function resolveMistake(answerId, isReviewed = true) {
+  const res = await api.post(`/user/mistakes/${answerId}/resolve`, { is_reviewed: isReviewed });
+  return res.data;
+}
+
+export async function submitQuestionFeedback(questionId, reason, description = "") {
+  const res = await api.post(`/questions/${questionId}/feedback`, { reason, description });
+  return res.data;
+}
+
+export async function fetchAdminQuestionFeedbacks(status = "pending") {
+  const res = await api.get("/admin/question-feedbacks", { params: { status } });
+  return res.data;
+}
+
 // ============ TESTS / DENEMELER ============
 export async function fetchTests(examId) {
   const params = examId ? { exam_id: examId } : {};
@@ -219,23 +245,44 @@ export async function fetchDashboard(userId) {
 
 export async function fetchWeakTopicsData(userId) {
   const res = await api.get("/user/weak-topics");
-  return res.data;
+  return res.data || { topics: [], critical: [], improvement: [], good: [], strong: [] };
 }
 
 export async function fetchProficiency(userId) {
-  const weak = await fetchWeakTopicsData(userId);
-  return {
-    critical_count: weak.critical?.length || 0,
-    improvement_count: weak.improvement?.length || 0,
-    good_count: weak.good?.length || 0,
-  };
+  const data = await fetchWeakTopicsData(userId);
+  return data.topics || [];
 }
 
 export async function fetchStudyNotes(examId, topicId) {
   const params = {};
-  if (examId) params.exam_id = exam_id;
+  if (examId) params.exam_id = examId;
   if (topicId) params.topic_id = topicId;
   const res = await api.get("/study-notes", { params });
+  return res.data;
+}
+
+export async function fetchAdminNotes(params = {}) {
+  const res = await api.get("/admin/notes", { params });
+  return res.data;
+}
+
+export async function createAdminNote(payload) {
+  const res = await api.post("/admin/notes", payload);
+  return res.data;
+}
+
+export async function updateAdminNote(noteId, payload) {
+  const res = await api.put(`/admin/notes/${noteId}`, payload);
+  return res.data;
+}
+
+export async function deleteAdminNote(noteId) {
+  const res = await api.delete(`/admin/notes/${noteId}`);
+  return res.data;
+}
+
+export async function generateAiNote(payload) {
+  const res = await api.post("/admin/notes/ai-generate", payload);
   return res.data;
 }
 
@@ -388,35 +435,30 @@ export async function bulkImportAdminTercih(programs) {
 }
 
 
-// ============ PLACEMENT TEST ============
+// ============ PLACEMENT & DIAGNOSTIC TEST ============
 export async function createPlacementTest(examId) {
-  const questions = await fetchQuestionsForExam(examId, 15);
-  return {
-    id: "placement-test-session",
-    name: "Seviye Tespit Sınavı",
-    duration_minutes: 20,
-    questions: questions,
-  };
+  const res = await api.get(`/placement-test/${examId}`);
+  return res.data;
 }
 
-export async function submitPlacementTest(examId, userId, answers, timeMap) {
-  const total = Object.keys(answers).length;
-  let correct = 0;
-  for (const [qid, ans] of Object.entries(answers)) {
-    if (ans) correct++;
-  }
-  return {
-    total,
-    correct,
-    level: correct > 10 ? 3 : correct > 5 ? 2 : 1,
-    success_rate: Math.round((correct / Math.max(1, total)) * 100),
-  };
+export async function evaluatePlacementTest(payload) {
+  const res = await api.post("/placement-test/evaluate", payload);
+  return res.data;
 }
 
 export async function savePlacementResult(localResult, examId, userId) {
+  if (localResult?.answers) {
+    return evaluatePlacementTest({
+      exam_id: examId,
+      answers: localResult.answers,
+      time_spent_seconds: localResult.time_spent || 0,
+      user_id: userId,
+    });
+  }
   return updateProfile(userId, {
     placement_completed: true,
     level: localResult?.level || 1,
+    target_exams: [examId],
   });
 }
 
@@ -648,4 +690,21 @@ export async function cancelDepartmentArticlesGen() {
   const res = await api.delete("/admin/blog/generate-department-articles/cancel");
   return res.data;
 }
+
+// ============ AI EXAM ARCHITECT & ONE-CLICK PROVISIONING ============
+export async function discoverAiExam(payload) {
+  const res = await api.post("/admin/exams/ai-discover", payload);
+  return res.data;
+}
+
+export async function provisionAiExam(payload) {
+  const res = await api.post("/admin/exams/ai-provision", payload);
+  return res.data;
+}
+
+export async function fetchExamDistributionAudit() {
+  const res = await api.get("/admin/exams/distribution-audit");
+  return res.data;
+}
+
 

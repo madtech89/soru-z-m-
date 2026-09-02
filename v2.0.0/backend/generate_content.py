@@ -100,15 +100,30 @@ Türkçe dil bilgisine tam uygun, heyecan verici, motive edici ve öğrenci dost
 # ─── API Çağrıları ────────────────────────────────────────────────────────────
 async def call_gemini(prompt: str, api_key: str) -> str:
     import httpx
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={api_key}"
-    body = {
-        "contents": [{"parts": [{"text": prompt}]}],
-        "generationConfig": {"temperature": 0.65, "maxOutputTokens": 2048, "topP": 0.9},
-    }
-    async with httpx.AsyncClient(timeout=45) as client:
-        r = await client.post(url, json=body)
-        r.raise_for_status()
-        return r.json()["candidates"][0]["content"]["parts"][0]["text"]
+    default_model = os.getenv("GEMINI_MODEL", "gemini-3.6-flash")
+    models_to_try = [default_model, "gemini-2.0-flash", "gemini-1.5-flash"]
+    models_to_try = list(dict.fromkeys(models_to_try))
+    
+    last_err = None
+    for model in models_to_try:
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}"
+        body = {
+            "contents": [{"parts": [{"text": prompt}]}],
+            "generationConfig": {"temperature": 0.65, "maxOutputTokens": 2048, "topP": 0.9},
+        }
+        try:
+            async with httpx.AsyncClient(timeout=45) as client:
+                r = await client.post(url, json=body)
+                if r.status_code == 200:
+                    return r.json()["candidates"][0]["content"]["parts"][0]["text"]
+                elif r.status_code == 404:
+                    continue
+                else:
+                    r.raise_for_status()
+        except Exception as e:
+            last_err = e
+            continue
+    raise last_err or RuntimeError("Gemini API çağrısı başarısız oldu.")
 
 
 async def call_openai(prompt: str, api_key: str) -> str:
@@ -138,6 +153,7 @@ class KeyRotator:
         for var, provider in [
             ("GEMINI_API_KEYS", "gemini"), ("GEMINI_API_KEY", "gemini"), ("GOOGLE_API_KEY", "gemini"),
             ("OPENAI_API_KEYS", "openai"), ("OPENAI_API_KEY", "openai"),
+            ("GROQ_API_KEYS", "groq"), ("GROQ_API_KEY", "groq"),
         ]:
             raw = os.getenv(var, "").strip()
             if not raw:
@@ -149,6 +165,23 @@ class KeyRotator:
                 for k in keys:
                     if k not in self.pools[provider]:
                         self.pools[provider].append(k)
+
+    async def load_db_keys(self, pool=None):
+        if not pool:
+            return
+        try:
+            async with pool.acquire() as conn:
+                async with conn.cursor() as cur:
+                    await cur.execute("SELECT provider, key_value FROM api_keys WHERE is_active = 1")
+                    rows = await cur.fetchall()
+                    for prov, kval in rows:
+                        p = (prov or "gemini").lower().strip()
+                        if p not in self.pools:
+                            self.pools[p] = []
+                        if kval not in self.pools[p]:
+                            self.pools[p].append(kval)
+        except Exception:
+            pass
 
     async def next_key(self, preferred="gemini"):
         async with self._lock:
@@ -204,7 +237,7 @@ class ParallelGenerator:
                 async with conn.cursor() as cur:
                     # Zaten üretilmiş mi?
                     await cur.execute(
-                        "SELECT id FROM notes WHERE topic_id=%s AND title LIKE %s LIMIT 1",
+                        "SELECT id FROM study_notes WHERE topic_id=%s AND title LIKE %s LIMIT 1",
                         (topic_id, f"%Konu Anlatımı%"),
                     )
                     if await cur.fetchone():
@@ -252,23 +285,19 @@ class ParallelGenerator:
             # MySQL'e kaydet
             note_id = str(uuid.uuid4())
             now = now_iso()
-            tags = json.dumps(["konu-anlatımı", "ai-üretim", exam_name.lower().replace(" ", "-")])
 
             async with pool.acquire() as conn:
                 async with conn.cursor() as cur:
                     await cur.execute(
-                        """INSERT INTO notes
+                        """INSERT INTO study_notes
                            (id, exam_id, subject_id, topic_id, title, description,
-                            content, video_url, author, tags, created_at, updated_at)
-                           VALUES (%s,%s,%s,%s,%s,%s,%s,'',%s,%s,%s,%s)
-                           ON DUPLICATE KEY UPDATE updated_at=VALUES(updated_at)""",
+                            content, video_url, status, published_at, created_at)
+                           VALUES (%s,%s,%s,%s,%s,%s,%s,'','published',%s,%s)""",
                         (
                             note_id, exam_id, subject_id, topic_id,
                             f"📖 {topic_name} — Konu Anlatımı",
                             f"{exam_name} sınavı için {subject_name} › {topic_name} konusunun detaylı anlatımı.",
-                            content,
-                            "AI Asistan",
-                            tags, now, now,
+                            content, now, now,
                         ),
                     )
 
